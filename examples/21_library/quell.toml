@@ -1,0 +1,12 @@
+[package]
+name = "@ava/colors"
+version = "0.1.0"
+description = "Mix, blend and convert colors."
+license = "MIT OR Apache-2.0"
+
+# What this package is allowed to do. The compiler enforces it:
+# importing std.net here, for example, would not compile.
+[permissions]
+network = false
+filesystem = false
+unsafe = false

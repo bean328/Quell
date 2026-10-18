@@ -1,0 +1,11 @@
+[package]
+name = "sqlite-version"
+version = "0.1.0"
+
+# Calling C needs `unsafe`, and the package has to say so up front.
+# The package registry shows this to everyone who uses it.
+[permissions]
+unsafe = true
+
+[c]
+link = ["sqlite3"]

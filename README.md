@@ -14,6 +14,7 @@ Quell is in **Phase 0: design on paper**. There is no compiler yet. See the [roa
 
 ## Documents
 
+- [Quell by Example](examples/README.md): 29 programs, from hello world to microcontrollers, that define the language.
 - [Master plan](docs/PLAN.md): goals, design principles, language design, tooling, roadmap.
 - [Decision records](docs/decisions/README.md): every major decision and the reasons behind it.
 

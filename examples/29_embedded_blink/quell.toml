@@ -1,0 +1,12 @@
+[package]
+name = "blink"
+version = "0.1.0"
+
+# A Raspberry Pi Pico. "bare" means no operating system and no heap:
+# only Quell's `core` library is included.
+[build]
+target = "rp2040"
+profile = "bare"
+
+[dependencies]
+"@quell/rp2040" = "0.1"

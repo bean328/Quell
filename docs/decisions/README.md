@@ -20,3 +20,4 @@ Decisions are never deleted. If one changes, a new record supersedes it.
 |---|---|---|
 | [0001](0001-compiler-in-rust.md) | Write the first compiler in Rust, self-host later | Accepted |
 | [0002](0002-license.md) | Fully open source under MIT + Apache-2.0 | Accepted |
+| [0003](0003-syntax.md) | Syntax: braces for structure, words for meaning | Accepted |
