@@ -1,0 +1,12 @@
+# Rust build output
+/target/
+
+# Quell build output and caches
+.quell/
+
+# Editors and OS files
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
