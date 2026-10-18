@@ -12,7 +12,7 @@ fn write_report(path: String, lines: List<String>) throws {
 
 fn count_words(path: String) -> Int throws {
     let text = try fs.read_text(path)
-    return text.split_whitespace().length()
+    text.split_whitespace().length()
 }
 
 // `defer` runs something when the current block ends, however it ends

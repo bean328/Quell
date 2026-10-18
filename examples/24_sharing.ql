@@ -21,12 +21,13 @@ group {
 print("visits: {visits.get()}")
 
 // 3. Mutex: shared data bigger than a number. Only one task can use it at a time.
-// `lock` waits its turn, then hands the lambda the data, ready to change.
+// `lock` waits its turn, then hands the lambda the data.
+// `mut entries` shows that this lambda changes it.
 let log = Mutex(List<String>())
 group {
     for name in ["Ava", "Sam", "Kai"] {
         spawn {
-            log.lock(entries => entries.append("{name} joined"))
+            log.lock(mut entries => entries.append("{name} joined"))
         }
     }
 }

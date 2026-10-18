@@ -9,10 +9,10 @@ enum AgeError: Error {
 
 fn parse_age(text: String) -> Int throws AgeError {
     let trimmed = text.trim()
-    if trimmed.is_empty() { throw .Empty }
-    let age = trimmed.to_int() else { throw .NotANumber(text: trimmed) }
-    if age < 0 or age > 150 { throw .OutOfRange(age: age) }
-    return age
+    if trimmed.is_empty() { throw Empty }
+    let age = trimmed.to_int() ?? throw NotANumber(text: trimmed)
+    if age < 0 or age > 150 { throw OutOfRange(age: age) }
+    age
 }
 
 // `try` passes the error up to whoever called this function
@@ -21,7 +21,7 @@ fn parse_ages(texts: List<String>) -> List<Int> throws AgeError {
     for text in texts {
         ages.append(try parse_age(text))
     }
-    return ages
+    ages
 }
 
 // `catch` gives a fallback value

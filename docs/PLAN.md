@@ -66,7 +66,7 @@ fn area(shape: Shape) -> Float = match shape {
     Rect(width, height) => width * height
 }
 
-let shapes: List<Shape> = [.Circle(radius: 2.0), .Rect(width: 3.0, height: 4.0)]
+let shapes: List<Shape> = [Circle(radius: 2.0), Rect(width: 3.0, height: 4.0)]
 
 var total = 0.0
 for s in shapes {
@@ -100,7 +100,7 @@ print("{hero.name} has {hero.health} HP")    // Ava has 70 HP
 ```quell
 fn read_config(path: String) -> Config throws ConfigError {
     let text = try fs.read_text(path)     // if this fails, the error is passed up
-    return try Config.parse(text)
+    try Config.parse(text)                // the last line is the result
 }
 
 // Simple: fall back to a default
@@ -118,13 +118,19 @@ match read_config("app.toml") {
 ```quell
 fn find_user(id: Int) -> User? { ... }
 
-if let user = find_user(42) {
-    print("Welcome back, {user.name}")
+let user = find_user(42)
+if user != none {
+    print("Welcome back, {user.name}")   // after the check, Quell knows user is there
 } else {
     print("No such user")
 }
 
 let name = find_user(42)?.name ?? "guest"
+
+fn age_in_months(text: String) -> Int? {
+    let years = text.to_int() ?? return none     // `??` can also leave early
+    years * 12
+}
 ```
 
 ### Safe, easy parallelism
@@ -161,7 +167,8 @@ Each decision has a **why**, so we never forget the reasoning.
 - Comments use `//` and `/* */`; documentation comments use `///`.
 - String interpolation is built into every string: `"Hi {name}"`. There's no prefix to forget, and `{{` gives a literal brace.
 - Ranges always say what they mean: `0..<10` stops before 10, `1..=10` includes 10.
-- **Why:** the most admired languages in the Stack Overflow 2025 survey (Rust, Gleam, Zig) share this brace-based shape, and research on beginners (Stefik and Siebert, 2013) found that cryptic C-style symbols, not readable keywords, are what slow novices down. Quell takes the shape everyone knows and the words beginners understand. Every choice and its source is in [decision 0003](decisions/0003-syntax.md).
+- One rule for results: every block gives its last line as its value, function bodies included. `return` is only for leaving early.
+- **Why:** the most admired languages in the Stack Overflow 2025 survey (Rust, Gleam, Zig) share this brace-based shape, and research on beginners (Stefik and Siebert, 2013) found that cryptic C-style symbols, not readable keywords, are what slow novices down. Quell takes the shape everyone knows and the words beginners understand. Every choice and its source is in [decision 0003](decisions/0003-syntax.md), and the review that tightened it is [decision 0004](decisions/0004-syntax-review.md).
 
 ### 4.2 Variables: `let` and `var`
 ```quell
@@ -224,7 +231,7 @@ let zoo: List<any Describe> = [Dog(name: "Rex"), 42]   // `any` = mix different 
 
 ### 4.8 No null, ever
 - A value that might be missing has type `T?`, and the compiler makes you deal with the missing case.
-- Tools: `if let`, `match`, `?.` (safe access), `??` (default value) and `let x = maybe else { return }` (unwrap or leave).
+- Tools: a normal `if x != none` check (after it, the compiler knows `x` is there), `?.` (safe access), `??` (a default value, or `?? return` to leave early) and `match`.
 - This removes the "billion-dollar mistake" entirely.
 
 ### 4.9 Memory: the heart of Quell
@@ -276,7 +283,7 @@ heal(mut hero, 20)    // you can SEE that `hero` may be changed
 
 ### 4.11 Compile-time code instead of macros
 ```quell
-@derive(Eq, Hash, Show, Json)
+@derive(Json)        // comparing, printing and hashing are automatic; @derive adds extras
 struct Point {
     x: Float
     y: Float
@@ -552,7 +559,8 @@ Plus a **QIR interpreter**, which powers `comptime`, the REPL, and serves as a s
 6. **Performance tracking:** benchmarks run on every change. If something gets slower, we know immediately.
 7. **Real-program dogfooding:** at each phase we build real things in Quell (a game, a web server, a JSON library, a ray tracer). If writing them feels bad, the language changes.
 8. **Beginner testing:** real newcomers try the Tour while we watch where they get stuck. Their confusion is our bug list.
-9. **RFC process** (after the public preview): language changes are proposed in writing, discussed, then accepted or rejected.
+9. **A syntax study before 1.0:** in the style of Stefik and Siebert, including a comparison group. People who have never seen Quell read and write short programs, and we measure how accurately they do it. Syntax people misread gets changed before it's frozen.
+10. **RFC process** (after the public preview): language changes are proposed in writing, discussed, then accepted or rejected.
 
 ---
 
@@ -570,7 +578,7 @@ Every phase ends with **exit criteria**. We don't move on until they're met. Eac
 - Lexer (with newline rules and string interpolation), error-recovering parser, syntax tree.
 - The error-message engine (pretty, colorful, with suggestions).
 - `quell fmt`.
-- **Exit:** every example parses; broken code produces helpful errors; the formatter is stable; the parser survives fuzzing.
+- **Exit:** every example parses with no ambiguity (any clash is fixed in the design, not patched in the parser); broken code produces helpful errors; the formatter is stable; the parser survives fuzzing.
 
 ### Phase 2: Understanding code (semantic core) (the make-or-break phase)
 - Name resolution, type inference, traits, generics.
@@ -606,7 +614,7 @@ Every phase ends with **exit criteria**. We don't move on until they're met. Eac
 - **Exit:** `quell new --lib` to published package with docs in under 5 minutes.
 
 ### Phase 9: Public preview (0.x)
-- Open to the world. Collect feedback, run beginner studies, start the RFC process, grow the community.
+- Open to the world. Collect feedback, run the syntax study (§10), start the RFC process, grow the community.
 - **Exit:** real people building real things; the top pain points are fixed.
 
 ### Phase 10: Quell 1.0

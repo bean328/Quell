@@ -7,9 +7,7 @@ struct Player {
 
     fn is_alive() -> Bool = self.health > 0
 
-    fn describe() -> String {
-        return "{self.name} (level {self.level}, {self.health} HP)"
-    }
+    fn describe() -> String = "{self.name} (level {self.level}, {self.health} HP)"
 
     // `mut fn` methods are allowed to change the struct
     mut fn take_damage(amount: Int) {
@@ -36,6 +34,10 @@ let visitor = Player.guest()
 print(visitor.describe())
 print(hero.is_alive())
 
+// Comparing and printing work automatically
+print(visitor == Player(name: "Guest"))
+print(visitor)
+
 // Calling a `mut fn` on a `let` value is a compile error:
 //     visitor.take_damage(10)
 //     error: `take_damage` changes `visitor`, but `visitor` was declared with `let`.
@@ -46,3 +48,5 @@ print(hero.is_alive())
 // Ava (level 2, 100 HP)
 // Guest (level 1, 100 HP)
 // true
+// true
+// Player(name: "Guest", health: 100, level: 1)

@@ -32,6 +32,10 @@ print(json)
 // A literal brace in a normal string is written twice
 print("Write {{name}} to insert a value")
 
+// A single character uses single quotes
+let initial = 'A'
+print("{initial} is for Ada")
+
 // Going through the characters
 for ch in "hey".chars() {
     print(ch)
@@ -50,6 +54,7 @@ for ch in "hey".chars() {
 // Quell is fast.
 // {"name": "Ava"}
 // Write {name} to insert a value
+// A is for Ada
 // h
 // e
 // y

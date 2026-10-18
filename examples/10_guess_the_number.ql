@@ -1,5 +1,5 @@
 // A complete little game: guess the secret number.
-// Uses loops, `match`, and `let ... else` (see 13_optionals.ql).
+// Uses loops, `match`, and checking optionals (see 13_optionals.ql).
 
 import std.random
 
@@ -10,11 +10,14 @@ print("I'm thinking of a number between 1 and 100.")
 
 repeat {
     // read_line gives `none` when there's no more input
-    let line = read_line("Your guess: ") else {
+    let line = read_line("Your guess: ")
+    if line == none {
         print("Bye!")
         break
     }
-    let guess = line.trim().to_int() else {
+
+    let guess = line.trim().to_int()
+    if guess == none {
         print("Please type a whole number.")
         continue
     }

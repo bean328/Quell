@@ -14,26 +14,21 @@ struct Task {
 
     fn to_line() -> String {
         let mark = if self.done { "[x]" } else { "[ ]" }
-        return "{mark} {self.title}"
+        "{mark} {self.title}"
     }
 }
 
 enum Command {
     Add(title: String)
     Done(number: Int)
-    List
+    ListAll
 }
 
-fn parse_command(args: List<String>) -> Command? {
-    match args {
-        ["add", title] => return Command.Add(title: title)
-        ["done", text] => {
-            let number = text.to_int() else { return none }
-            return Command.Done(number: number)
-        }
-        ["list"] or [] => return Command.List
-        _ => return none
-    }
+fn parse_command(args: List<String>) -> Command? = match args {
+    ["add", title] => Add(title: title)
+    ["done", text] => Done(number: text.to_int() ?? return none)
+    ["list"] or [] => ListAll
+    _ => none
 }
 
 fn load(path: String) -> List<Task> {
@@ -43,7 +38,7 @@ fn load(path: String) -> List<Task> {
         if line.is_empty() { continue }
         tasks.append(Task(title: line.slice(from: 4), done: line.starts_with("[x]")))
     }
-    return tasks
+    tasks
 }
 
 fn save(tasks: List<Task>, path: String) throws {
@@ -54,7 +49,8 @@ fn save(tasks: List<Task>, path: String) throws {
 let save_file = "todo.txt"
 var tasks = load(save_file)
 
-let command = parse_command(env.args()) else {
+let command = parse_command(env.args())
+if command == none {
     print("Usage: todo add <title> | done <number> | list")
     exit(1)
 }
@@ -72,7 +68,7 @@ match command {
         tasks[number - 1].done = true
         print("Done: {tasks[number - 1].title}")
     }
-    List => {
+    ListAll => {
         for (i, task) in tasks.enumerate() {
             print("{i + 1}. {task.to_line()}")
         }

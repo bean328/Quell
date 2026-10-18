@@ -27,7 +27,8 @@ for title in top_titles {
 let from_2010s = movies.count(m => m.year >= 2010 and m.year < 2020)
 print("From the 2010s: {from_2010s}")
 
-if let best = movies.max_by(m => m.rating) {
+let best = movies.max_by(m => m.rating)
+if best != none {
     print("Best: {best.title}")
 }
 

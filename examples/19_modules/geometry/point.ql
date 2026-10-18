@@ -10,7 +10,7 @@ pub struct Point {
 pub fn distance(a: Point, b: Point) -> Float {
     let dx = b.x - a.x
     let dy = b.y - a.y
-    return sqrt(square(dx) + square(dy))
+    sqrt(square(dx) + square(dy))
 }
 
 // No `pub`, so only this file can use it

@@ -38,6 +38,13 @@ let shapes: List<any Shape> = [Circle(radius: 2.0), Square(side: 3.0)]
 let total = shapes.map(s => s.area()).sum()
 print("Total area: {total:.1}")
 
+// `is` checks the exact type. After the check, Quell knows it's a Circle.
+for s in shapes {
+    if s is Circle {
+        print("a circle with radius {s.radius}")
+    }
+}
+
 // `extend` adds methods to types you didn't write, even built-in ones
 extend Int {
     fn is_even() -> Bool = self % 2 == 0
@@ -54,4 +61,5 @@ print(n.is_even())
 // circle with area 3.1
 // square with area 4.0
 // Total area: 21.6
+// a circle with radius 2.0
 // true

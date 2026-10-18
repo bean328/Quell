@@ -5,10 +5,8 @@ import c "sqlite3.h"
 
 // The `unsafe` part stays small and wrapped in a safe function,
 // so the rest of the program never touches C directly.
-fn sqlite_version() -> String {
-    unsafe {
-        return String.from_c(c.sqlite3_libversion())
-    }
+fn sqlite_version() -> String = unsafe {
+    String.from_c(c.sqlite3_libversion())
 }
 
 print("SQLite version: {sqlite_version()}")

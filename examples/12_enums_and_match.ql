@@ -8,19 +8,17 @@ enum Weather {
     Snowy(cm: Float)
 }
 
-fn advice(weather: Weather) -> String {
-    // `match` must handle every option. Forget one and it won't compile.
-    return match weather {
-        Sunny => "Sunglasses!"
-        Cloudy => "Maybe a jacket."
-        Rainy(mm) if mm > 10.0 => "Stay inside, it's pouring."
-        Rainy(_) => "Take an umbrella."
-        Snowy(cm) => "Build a snowman with {cm} cm of snow!"
-    }
+// `match` must handle every option. Forget one and it won't compile.
+fn advice(weather: Weather) -> String = match weather {
+    Sunny => "Sunglasses!"
+    Cloudy => "Maybe a jacket."
+    Rainy(mm) if mm > 10.0 => "Stay inside, it's pouring."
+    Rainy(_) => "Take an umbrella."
+    Snowy(cm) => "Build a snowman with {cm} cm of snow!"
 }
 
-// When the type is already known, `.Rainy` is short for `Weather.Rainy`
-let week: List<Weather> = [.Sunny, .Rainy(mm: 2.5), .Rainy(mm: 25.0), .Snowy(cm: 8.0), .Cloudy]
+// When the type is already known, `Rainy` is enough. `Weather.Rainy` also works.
+let week: List<Weather> = [Sunny, Rainy(mm: 2.5), Rainy(mm: 25.0), Snowy(cm: 8.0), Cloudy]
 
 for day in week {
     print(advice(day))

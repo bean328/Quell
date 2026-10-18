@@ -12,17 +12,18 @@ comptime {
     assert squares.length() == 16, "the table has the wrong size"
 }
 
-// @derive writes common code for you, using comptime under the hood
-@derive(Eq, Hash, Show, Json)
+// Comparing, printing and hashing come automatically.
+// @derive adds extra abilities, using comptime under the hood.
+@derive(Json)
 struct Point {
     x: Int
     y: Int
 }
 
 let p = Point(x: 1, y: 2)
-print(p)                          // Show: a readable form
-print(p == Point(x: 1, y: 2))     // Eq: comparing
-print(json.encode(p))             // Json: converting to JSON
+print(p)                          // automatic: a readable form
+print(p == Point(x: 1, y: 2))     // automatic: comparing
+print(json.encode(p))             // from @derive(Json)
 
 // Library authors write their own the same way: plain Quell that can look
 // at types. This is how @derive itself is built.

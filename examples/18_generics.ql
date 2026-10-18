@@ -2,16 +2,26 @@
 
 // Works for a list of anything that can be compared
 fn largest<T: Compare>(items: List<T>) -> T? {
-    var best = items.first() else { return none }
+    var best = items.first() ?? return none
     for item in items {
         if item > best { best = item }
     }
-    return best
+    best
 }
 
 print(largest([3, 9, 4]) ?? 0)
 print(largest(["pear", "apple", "zebra"]) ?? "")
 print(largest(List<Int>()) ?? -1)
+
+// Several requirements at once are joined with `and`
+fn show_largest<T: Compare and Show>(items: List<T>) {
+    let best = largest(items)
+    if best != none {
+        print("Largest: {best}")
+    }
+}
+
+show_largest([2.5, 7.5, 1.0])
 
 // A struct that can hold any type
 struct Stack<T> {
@@ -42,6 +52,7 @@ print(plates.size())
 // 9
 // zebra
 // -1
+// Largest: 7.5
 // blue plate
 // blue plate
 // 1

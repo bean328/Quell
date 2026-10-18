@@ -14,16 +14,14 @@ struct Greeting {
     visitor: Int
 }
 
-fn handle(request: Request, visits: Atomic<Int>) -> Response {
-    return match (request.method, request.path) {
-        (Get, "/") => Response.text("Welcome to Quell!")
-        (Get, "/hello") => {
-            let name = request.query("name") ?? "stranger"
-            let number = visits.add(1)
-            Response.json(Greeting(message: "Hello, {name}!", visitor: number))
-        }
-        _ => Response.not_found()
+fn handle(request: Request, visits: Atomic<Int>) -> Response = match (request.method, request.path) {
+    (Get, "/") => Response.text("Welcome to Quell!")
+    (Get, "/hello") => {
+        let name = request.query("name") ?? "stranger"
+        let number = visits.add(1)
+        Response.json(Greeting(message: "Hello, {name}!", visitor: number))
     }
+    _ => Response.not_found()
 }
 
 let visits = Atomic(0)

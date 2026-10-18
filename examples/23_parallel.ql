@@ -4,7 +4,7 @@ import std.time
 
 fn slow_square(n: Int) -> Int {
     time.sleep(ms: 100)     // pretend this is heavy work
-    return n * n
+    n * n
 }
 
 // `parallel for` spreads the work over all CPU cores
@@ -19,7 +19,7 @@ print(squares)
 // task inside it has finished, so no task is ever forgotten.
 fn download(name: String) -> String {
     time.sleep(ms: 200)
-    return "{name} downloaded"
+    "{name} downloaded"
 }
 
 group {

@@ -9,7 +9,6 @@
 // so the docs can never go out of date.
 
 /// A color made of red, green and blue parts, each from 0 to 255.
-@derive(Eq, Show)
 pub struct Color {
     pub r: UInt8
     pub g: UInt8
@@ -23,12 +22,12 @@ pub struct Color {
     /// assert Color.from_hex("orange") == none
     /// ```
     pub static fn from_hex(text: String) -> Color? {
-        let hex = text.strip_prefix("#") else { return none }
+        let hex = text.strip_prefix("#") ?? return none
         if hex.length() != 6 { return none }
-        let r = hex.slice(0..<2).to_int(base: 16) else { return none }
-        let g = hex.slice(2..<4).to_int(base: 16) else { return none }
-        let b = hex.slice(4..<6).to_int(base: 16) else { return none }
-        return Color(r: UInt8(r), g: UInt8(g), b: UInt8(b))
+        let r = hex.slice(0..<2).to_int(base: 16) ?? return none
+        let g = hex.slice(2..<4).to_int(base: 16) ?? return none
+        let b = hex.slice(4..<6).to_int(base: 16) ?? return none
+        Color(r: UInt8(r), g: UInt8(g), b: UInt8(b))
     }
 
     /// Writes the color in hex.
@@ -50,9 +49,11 @@ pub let blue = Color(r: 0, g: 0, b: 255)
 /// ```
 /// assert mix(red, blue) == Color(r: 127, g: 0, b: 127)
 /// ```
-pub fn mix(a: Color, b: Color) -> Color {
-    return Color(r: average(a.r, b.r), g: average(a.g, b.g), b: average(a.b, b.b))
-}
+pub fn mix(a: Color, b: Color) -> Color = Color(
+    r: average(a.r, b.r),
+    g: average(a.g, b.g),
+    b: average(a.b, b.b),
+)
 
 // Private helper. Widens to Int first so 255 + 255 can't overflow a UInt8.
 fn average(x: UInt8, y: UInt8) -> UInt8 = UInt8((Int(x) + Int(y)) div 2)

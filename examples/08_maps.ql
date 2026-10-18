@@ -8,7 +8,9 @@ ages["Kai"] = 11
 let sam = ages["Sam"] ?? 0
 print("Sam is {sam}")
 
-if let zoe = ages["Zoe"] {
+// After checking with `if`, Quell knows the value is there
+let zoe = ages["Zoe"]
+if zoe != none {
     print("Zoe is {zoe}")
 } else {
     print("No age for Zoe")

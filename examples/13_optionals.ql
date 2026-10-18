@@ -15,12 +15,13 @@ fn find_user(users: List<User>, name: String) -> User? {
     for user in users {
         if user.name == name { return user }
     }
-    return none
+    none
 }
 
-// 1. `if let`: run code only when the value is there
-if let user = find_user(users, "Ava") {
-    print("Found {user.name}")
+// 1. Check it with `if`. After the check, Quell knows the value is there.
+let ava = find_user(users, "Ava")
+if ava != none {
+    print("Found {ava.name}")
 }
 
 // 2. `??`: use a default when it's missing
@@ -31,11 +32,11 @@ print("Sam's email: {email}")
 let zoe_email = find_user(users, "Zoe")?.email
 print(zoe_email)
 
-// 4. `let ... else`: unwrap it, or leave early
+// 4. `??` can also leave early, with `return`, `throw`, `break` or `continue`
 fn email_domain(user: User) -> String? {
-    let email = user.email else { return none }
-    let at = email.find("@") else { return none }
-    return email.slice(from: at + 1)
+    let email = user.email ?? return none
+    let at = email.find("@") ?? return none
+    email.slice(from: at + 1)
 }
 
 print(email_domain(users[0]) ?? "unknown")
@@ -44,7 +45,7 @@ print(email_domain(users[1]) ?? "unknown")
 // Using an optional as if it were definitely there is a compile error:
 //     print(users[1].email.length())
 //     error: `email` might be missing (its type is `String?`).
-//     help: use `if let`, `??` or `?.` to handle the missing case.
+//     help: check it with `if email != none`, or use `??` or `?.`.
 
 // Output:
 // Found Ava
