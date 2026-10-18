@@ -1,0 +1,30 @@
+[workspace]
+resolver = "3"
+members = ["compiler/*"]
+
+[workspace.package]
+version = "0.0.1"
+edition = "2024"
+rust-version = "1.85"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/bean328/Quell"
+authors = ["Noctis Labs and the Quell contributors"]
+
+[workspace.dependencies]
+quell_diagnostics = { path = "compiler/quell_diagnostics" }
+quell_syntax = { path = "compiler/quell_syntax" }
+rowan = "0.16.1"
+unicode-ident = "1.0"
+insta = "1.43"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+missing_debug_implementations = "warn"
+
+[workspace.lints.clippy]
+dbg_macro = "warn"
+todo = "warn"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1

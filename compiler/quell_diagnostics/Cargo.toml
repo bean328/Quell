@@ -1,0 +1,14 @@
+[package]
+name = "quell_diagnostics"
+description = "Source files, spans and error messages for the Quell compiler"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+
+[lints]
+workspace = true

@@ -22,3 +22,4 @@ Decisions are never deleted. If one changes, a new record supersedes it.
 | [0002](0002-license.md) | Fully open source under MIT + Apache-2.0 | Accepted |
 | [0003](0003-syntax.md) | Syntax: braces for structure, words for meaning | Accepted, revised by 0004 |
 | [0004](0004-syntax-review.md) | Syntax review: one bug fixed, rules made consistent | Accepted |
+| [0005](0005-front-end-architecture.md) | Front end: hand-written parser, lossless syntax tree | Accepted |

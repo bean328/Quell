@@ -1,0 +1,20 @@
+[package]
+name = "quell_cli"
+description = "The `quell` command"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[[bin]]
+name = "quell"
+path = "src/main.rs"
+
+[dependencies]
+quell_diagnostics.workspace = true
+quell_syntax.workspace = true
+
+[lints]
+workspace = true
