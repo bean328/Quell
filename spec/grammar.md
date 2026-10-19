@@ -84,12 +84,16 @@ TopElement  = Item | Statement ;
 
 ### 2.2 Entry files and library files
 
-PLAN section 4.13 says top-level code runs only in the program's entry file. The parser handles this with a **file role** given to it by the build driver:
+PLAN section 4.13 says top-level code runs only in the program's entry file. The parser handles this with a **file role** given to it by the build driver. There are exactly two roles, and every file has one:
 
-- An **entry file** (the file given to `quell run`, or a package's main file) may contain items and statements in any order.
-- A **library file** (every other file: modules such as `geometry/point.ql`, and a library's `src/lib.ql`) may contain only items.
+- An **entry file** may contain items and statements in any order. The entry files are: the file given to `quell run` (such as `19_modules/main.ql` or `20_testing.ql`); the main file of a program package, which in the examples is `main.ql` at the package root (`28_c_interop/main.ql`, `29_embedded_blink/main.ql`); and every code example in a doc comment ([lexical.md, 4.3](lexical.md#43-doc-comments)).
+- A **library file** may contain only items. The library files are all other files: the main module of a library package (`21_library/src/lib.ql`, which `import` reaches as "a package's main module", section 3.9) and every other module (`geometry/point.ql`).
 
-The grammar is the same for both. After parsing a library file, the parser reports each top-level `Statement` as an error: "code at the top level only runs in the entry file; move it into a function". Top-level `let` is an item, so it is allowed in library files (example 21 has `pub let red = ...`). The rule that a library's top-level `let` values must be computable at compile time is checked later. A top-level `var` in a library file is reported by the same later stage.
+Exactly which file of a package is its main file, and how the build tool knows whether a package is a program or a library, belongs to the build tool and its manifest, not to this syntax spec. The examples follow the layout above; making it official is an [open question](README.md#open-questions).
+
+The role does not depend on attributes or on the build profile. `@entry` (example 29) marks the function where a program without scripts starts; it does not change the file's role. Whether top-level statements are allowed on a target with no operating system (`profile = "bare"`) is checked by a later stage.
+
+The grammar is the same for both roles. After parsing a library file, the parser reports each top-level `Statement` as an error: "code at the top level only runs in the entry file; move it into a function". Top-level `let` is an item, so it is allowed in library files (example 21 has `pub let red = ...`). The rule that a library's top-level `let` values must be computable at compile time is checked later. A top-level `var` in a library file is reported by the same later stage.
 
 ---
 
@@ -144,14 +148,14 @@ FnBody        = "=" Expr | Block ;
 - **Methods** have no explicit `self` parameter. Inside a method, `self` is a keyword expression.
 - **Return type.** No `->` means the function gives no value. `-> Never` means it never returns; `Never` is an ordinary type name to the parser.
 - **`throws`.** `throws` alone means the function can fail with any error (examples 16 and 26). `throws AgeError` names the error type. `throws` comes after the return type if there is one: `-> Int throws AgeError`. Because a type can never start with `{` or `=`, the parser knows whether a type follows `throws`.
-- **Bodies.** `= expr` for a function whose whole body is one expression, or a block. Either way the function's value is the value of the body (section 4.1). The formatter's rule that `{ x * x }` becomes `= x * x` does not affect parsing.
+- **Bodies.** `= expr` for a function whose whole body is one expression, or a block. Either way the function's value is the value of the body (section 4.1). The formatter rewrites a block body that holds exactly one expression statement, `{ x * x }`, to `= x * x` (decision 0004). This holds whatever the return type, so `fn greet(name: String) = print("Hi {name}")` is the formatted form. A body whose only statement is an assignment, a `let` or a loop is not an expression and keeps its block (`mut fn take_damage(amount: Int) { self.health -= amount }`). The formatter rule does not affect parsing: both forms are valid.
 - **No body.** A function without a body is a **requirement** and is allowed only directly inside a `trait`. Anywhere else the parser reports "this function needs a body: add `{ }` or `= value`".
 - **The body's `{` must be on the same line** as the end of the signature (a `NEWLINE` before it is an error with a fix, see [lexical.md, 12.6](lexical.md#126-worked-examples)). In a trait this matters: `fn area() -> Float` followed by a line break is a complete requirement.
 
 ### 3.4 Generic parameters
 
 ```
-GenericParams = "<" GenericParam { "," GenericParam } [ "," ] ">" ;
+GenericParams = "<" GenericParam { "," GenericParam } [ "," ] [ NEWLINE ] ">" ;
 GenericParam  = UPPER_IDENT [ ":" Requirement { "and" Requirement } ] ;
 Requirement   = TypePath ;
 ```
@@ -160,6 +164,7 @@ Requirement   = TypePath ;
 - Several requirements on one parameter are joined with `and` (decision 0004). Here `and` is a separator, not the logic operator; the two never meet because this rule is only used in declarations.
 - In a declaration, `<` right after the name always starts generic parameters, so there is no ambiguity with less-than.
 - The closing `>` may be split from `>>`, `>=` or `>>=` (section 7.3).
+- **Over several lines.** `<` and `,` are in the continue-after set, so the list can be split after them. `<` is not a bracket for the lexer, so a line break before the closing `>` becomes a `NEWLINE`; the rule allows one there, like the import list (section 3.9). So both `fn pair<` / `K: Hash,` / `V: Show` / `>(k: K, v: V)` and the same with a trailing comma work. This applies to declarations only, where `<` is never less-than. `GenericArgs` (section 6.11) has no such `NEWLINE`.
 - `where` clauses and default type arguments are not part of v0.1.
 
 ### 3.5 Structs
@@ -285,7 +290,8 @@ GlobalLet     = [ "comptime" ] ( "let" | "var" ) BindingPattern [ ":" Type ] "="
 ```
 
 - `let name = "Ava"`, `pub let red = Color(r: 255, g: 0, b: 0)`, `comptime let squares = ...`.
-- The syntax is the same as a `LetStmt` (section 4.2), with optional `pub` (from `Item`) and `comptime` in front.
+- The syntax is the same as a `LetStmt` (section 4.3), with optional `pub` (from `Item`) and `comptime` in front.
+- Every `let` and `var` at the top level of a file is a `GlobalLet`, including those in scripts such as `let name = "Ava"` and `let (low, high) = min_max(...)` (section 2.1). Only a `let` or `var` inside a block is a `LetStmt`.
 - `pub var` and `comptime var` are errors.
 
 ---

@@ -53,6 +53,8 @@ When the lexer finds a mistake, it reports it, produces the most likely intended
 
 Indentation has no meaning in Quell. Blocks are always marked with `{ }`. The one place where indentation matters is the trimming of [multi-line strings](#95-multi-line-strings).
 
+**Spaces between tokens never change how code parses.** Only line breaks do. When this spec says one token "directly follows" another, or says "the next token", it means the next token in the stream, with or without spaces between them. So `Stack <String>()` is the same as `Stack<String>()`, and the pattern `- 1` is the same as `-1`. The formatter normalizes the spacing. The one exception is the `count++` and `count--` check in [grammar.md, section 11](grammar.md#11-rejected-syntax), which looks for two `+` or two `-` characters written next to each other.
+
 ---
 
 ## 4. Comments
@@ -86,7 +88,14 @@ A comment that starts with **exactly three** slashes, `///`, is a doc comment. I
 
 - Doc comments are trivia like other comments, so they never change how code parses. The parser attaches each run of consecutive doc comment lines to the element that starts right after them: an item, a struct field, a method, an enum option or a trait member.
 - A doc comment that is not followed by one of those elements (for example, before a statement inside a function body) is reported as a warning: "this doc comment doesn't document anything".
-- The text of a doc comment is not lexed as Quell. Code examples inside it (between ```` ``` ```` lines) are extracted and run by `quell test`, as described in [examples/21_library](../examples/21_library/src/lib.ql). How that works is outside the scope of this syntax specification.
+- The text of a doc comment is not lexed as Quell. Code examples inside it are extracted and run by `quell test` (PLAN 6.3, [examples/21_library](../examples/21_library/src/lib.ql)).
+
+**Code examples in doc comments.** In one run of consecutive doc comment lines, a **fence** is a line whose text (after `///` and any spaces) starts with ```` ``` ````. The lines between an opening fence and the next fence are one code example. Its source text is made like this:
+
+1. From each line, remove `///` and at most one space after it.
+2. Join the lines with line breaks.
+
+The result is lexed and parsed as a separate file with the `File` rule ([grammar.md, 2.1](grammar.md#21-file-structure)), in the **entry-file role** ([grammar.md, 2.2](grammar.md#22-entry-files-and-library-files)). So top-level statements such as `assert Color.from_hex("orange") == none` are valid, and they run in order as one test. Errors are reported at their place in the original file. Which names the example can see (for example `Color` and `mix` from the file it documents) is decided by name resolution, not by this spec. An opening fence with no closing fence is an error.
 
 ---
 
@@ -115,6 +124,8 @@ Every identifier is in exactly one of two classes, decided **only by its first c
 - **LOWER_IDENT**: every other identifier. The first character is a lowercase letter, a letter from a script without case, or `_`. Examples: `score`, `take_damage`, `_unused`, `c`.
 
 The grammar uses `IDENT` when either class is allowed, and `UPPER_IDENT` or `LOWER_IDENT` when only one is.
+
+A name that starts with a letter from a script without case (for example Chinese or Japanese) is always a `LOWER_IDENT`. Such a name works for variables, functions and fields, but it can't be a type or an enum option name, because those must start with an uppercase letter (5.3). This follows from the settled naming rule and is listed as an [open question](README.md#open-questions).
 
 ### 5.3 The naming rule
 
@@ -149,10 +160,10 @@ Names that come from outside Quell (for example C functions and types reached th
 Besides the declaration checks, the parser uses the upper/lower class in exactly two places. Nowhere else does capitalization change how code parses.
 
 1. **Patterns.** In a pattern, a bare (undotted) name is read by its class:
-   - an `UPPER_IDENT` is a **reference** to something that already exists: an enum option (`Sunny`, `Rainy(mm)`) or a type (a struct being taken apart, `Point(x, y)`);
+   - an `UPPER_IDENT` is always an **enum option** that already exists (`Sunny`, `Rainy(mm)`), as decision 0003 says;
    - a `LOWER_IDENT` is always a **new binding** that captures the matched value (`mm`, `title`).
 
-   A dotted name in a pattern (`Weather.Rainy`, `Int.max`) is always a reference, whatever its case. A bare `LOWER_IDENT` followed by `(` is an error ("a new name can't have `( )`; option names start with a capital letter"). Because of this rule, a pattern never needs to know what names are in scope to be parsed, and `Sunny =>` can never accidentally mean "bind anything to a variable called Sunny". To compare against an existing lowercase value, use a guard: `x if x == limit => ...`.
+   A dotted name in a pattern (`Weather.Rainy`, `Int.max`) is always a reference, whatever its case. Whether the name really is an enum option is checked by name resolution. Taking a struct apart in a pattern (`Point(x, y)`) is not in v0.1 (an [open question](README.md#open-questions)). A bare `LOWER_IDENT` followed by `(` is an error ("a new name can't have `( )`; option names start with a capital letter"). Because of this rule, a pattern never needs to know what names are in scope to be parsed, and `Sunny =>` can never accidentally mean "bind anything to a variable called Sunny". To compare against an existing lowercase value, use a guard: `x if x == limit => ...`.
 
 2. **The `catch` binding form.** `expr catch name { ... }` binds the error only when `name` is a `LOWER_IDENT` (or `_`). An `UPPER_IDENT` after `catch` is a fallback value, such as an enum option (`load() catch Empty`). See [grammar.md, catch](grammar.md#65-catch).
 
@@ -164,7 +175,9 @@ In expressions, the parser does **not** look at capitalization. `Player(name: "A
 
 ### 6.1 Reserved keywords
 
-These 40 words are **reserved**: they can never be used as names, including as field or method names after `.`.
+These 40 words are **reserved**: they can never be declared as names (variables, functions, parameters, fields, types and so on).
+
+There is one place where a reserved word is read as a name: **right after `.` or `?.`** in an expression ([grammar.md, 6.10](grammar.md#610-postfix-operators-and-calls)). Only a name can follow `.` there, so this is never ambiguous. It lets Quell code reach names that come from outside Quell and happen to be keywords, such as the C function `div` from `stdlib.h` (`c.div(7, 2)`). The lexer still produces the keyword token; the parser accepts it as a member name. Declaring a Quell field or method with a keyword name is not possible in v0.1 (an [open question](README.md#open-questions)).
 
 | Keyword | Used for |
 |---|---|
@@ -266,6 +279,7 @@ OctDigit     = "0" to "7" ;
 - **Leading zeros** in decimal numbers are an error: `007` gets the message "numbers can't start with 0; for an octal number write `0o7`". This prevents the C trap where `010` means 8.
 - A prefix with no digits (`0x`) or a digit that doesn't fit the base (`0b102`) is an error.
 - The lexer stores the exact value with no size limit. Whether the value fits its type (`Int`, `UInt8`, ...) is checked later.
+- **Negative literals.** Number literals are never negative, so `-9223372036854775808` (the smallest `Int`) is the prefix `-` applied to `9223372036854775808`, which on its own does not fit in `Int`. Rule: when a prefix `-` is applied directly to an `INT` or `FLOAT` literal (`-` followed by the literal, with no parentheses), the later range check uses the negated value. This matches negative literal patterns ([grammar.md, 8.1](grammar.md#81-pattern-syntax)), where `-` and the number are read as one value.
 
 ### 7.2 Float literals
 
@@ -351,6 +365,8 @@ Hole         = "{" HoleTokens [ ":" FormatSpec ] "}" ;
 HoleTokens   = the tokens of one expression, ended by the depth rule of 9.3 ;
 ```
 
+**Order of the alternatives.** In string text (outside a hole), the lexer checks for `{{` and `}}` **before** it checks for a hole. So `{{` is always a literal `{`, and a hole can never start with a second `{` written right after the first. This removes the two readings of `"{{name}}"`: it is always the text `{name}`, never a hole. Inside a hole the lexer reads ordinary tokens, so there `}}` is simply two `}` tokens.
+
 A normal string starts with `"` and ends at the next `"` that is not escaped and not inside a hole. It cannot contain a raw line break; use `\n`. An unclosed string is an error reported at its opening quote, and the string is assumed to end at the end of the line.
 
 ### 9.2 Escapes
@@ -382,7 +398,9 @@ Inside normal and multi-line strings, `{` starts a **hole**: an expression whose
 "#{self.r:02x}{self.g:02x}"      // `#` before `{` is just text
 ```
 
-**Literal braces.** `{{` is a literal `{` and `}}` is a literal `}`. A single `}` that does not close a hole is an error with the fix "write `}}` for a literal brace". So `"Write {{name}} to insert a value"` is the text `Write {name} to insert a value`.
+**Literal braces.** In string text, `{{` is a literal `{` and `}}` is a literal `}`, and they are checked before holes (9.1). A single `}` that does not close a hole is an error with the fix "write `}}` for a literal brace". So `"Write {{name}} to insert a value"` is the text `Write {name} to insert a value`.
+
+Because `{{` is always a literal brace, a hole whose expression starts with `{` (a block) needs a space after the hole's own `{`: `"{ {x} }"` is a hole, while `"{{x}}"` is the text `{x}`. Likewise `"{{ if ok { 1 } else { 2 } }}"` is plain text. The formatter keeps the space in `"{ {x} }"`.
 
 **How the lexer finds the end of a hole.** After the opening `{`, the lexer reads ordinary tokens (with all the usual rules, including nested strings and character literals), and keeps a depth counter:
 
@@ -390,7 +408,7 @@ Inside normal and multi-line strings, `{` starts a **hole**: an expression whose
 - At **depth 0**, a `:` token ends the expression and starts the **format spec** (section 9.4).
 - At **depth 0**, a `}` ends the hole.
 
-This is the rule from decision 0004: "the format spec starts at the first `:` that isn't inside parentheses or brackets". It is extended to count braces too, because a `{` inside a hole always opens a block (for example `"{if ok { "yes" } else { "no" }}"`), so a colon inside it can't be a format spec either. Colons elsewhere in Quell expressions (named arguments, map entries, typed lambda parameters) only occur inside `( )` or `[ ]`, so the rule never cuts an expression short:
+This is the rule from decision 0004: "the format spec starts at the first `:` that isn't inside parentheses or brackets". It is extended to count braces too, because a `{` among the hole's tokens (after the hole's own opening `{`) always opens a block (for example `"{if ok { "yes" } else { "no" }}"`), so a colon inside it can't be a format spec either. Colons elsewhere in Quell expressions (named arguments, map entries, typed lambda parameters) only occur inside `( )` or `[ ]`, so the rule never cuts an expression short:
 
 | Hole | Expression | Format spec |
 |---|---|---|
@@ -403,6 +421,8 @@ More rules for holes:
 
 - A hole must contain an expression. `{}` and `{ }` are errors ("empty `{}`; write `{{}}` for literal braces"). A hole with only a format spec (`{:.2}`) is also an error.
 - A hole cannot contain a line break, even in a multi-line string. Inside a hole, the [newline rules](#12-the-newline-rules) treat the hole like a pair of parentheses.
+- **A hole that is never closed.** If the end of the line comes before the `}` that would close a hole, the hole is unclosed. The lexer reports the error at the hole's `{`: "this `{` starts a value inside the string, but it is never closed. For a literal brace write `{{`. For JSON, use a raw string such as `#"{"a": 1}"#`." It then goes back to just after that `{` and reads the rest of the line again as string text. So in `print("Use { to start a block")` the user gets this one message, and the string and the call still end where they appear to.
+- **A likely JSON mistake.** If a format spec is invalid (9.4) and the hole's expression is a single string literal, as in `"{"a": 1}"`, the error also gets the raw-string hint above.
 - Comments are not allowed inside a hole. `//` or `/*` inside a hole is an error ("comments can't go inside `{ }` in a string").
 - The tokens of the hole are kept inside the `STRING` token. The parser parses them as exactly one expression ([grammar.md, 6.13](grammar.md#613-string-literals-and-holes)).
 
@@ -571,6 +591,8 @@ Everywhere else, a `NEWLINE` token is a syntax error. That is why the rules belo
 
 The lexer keeps a stack of open brackets. Opening `(`, `[` or `{` pushes it; the matching closer pops it. (A closer that does not match the top of the stack is an error; the lexer reports it and pops back to the matching opener if there is one.) A hole in a string counts as a `(` while its tokens are being lexed.
 
+The lexer also **records, for every `(`, `[` and `{`, the position of its matching closer** (or that it has none). The parser uses this to look past a pair of parentheses in one step instead of scanning it ([grammar.md, 6.1](grammar.md#61-the-top-rule)).
+
 For each token **T** that has at least one line break before it, let **P** be the token before it (ignoring trivia). The line break before T becomes a `NEWLINE` token **unless one of these holds**:
 
 1. **Start or end of file.** There is no P (T is the first token), or T is `EOF`. A file never starts or ends with `NEWLINE`.
@@ -679,7 +701,14 @@ let f = x => x * 2·
     .to_string()
 ```
 
-means `let f = x => x * 2.to_string()`, where `.to_string()` applies to `2`. To call a method on a whole expression, wrap it in parentheses.
+means `let f = x => x * 2.to_string()`, where `.to_string()` applies to `2`. To call a method on a whole expression, wrap it in parentheses. The same happens after any operator:
+
+```quell
+let name = user.nickname ?? user.name·
+    .upper()
+```
+
+means `user.nickname ?? (user.name.upper())`, so a nickname is never made uppercase. Both programs are valid, so the parser gives a **warning**: when a `.` or `?.` that starts a line attaches to an operand that is the right side of a binary operator (including `??` and `catch`), the operand of a prefix operator, the body of a lambda or the value of a jump, it says "this `.upper()` applies only to `user.name`. To apply it to the whole expression, wrap the expression in parentheses." To keep the meaning and silence the warning, put the right side in parentheses: `user.nickname ?? (user.name` and `.upper())` on the next line. A plain chain such as `movies` followed by `.filter(...)` lines never gets the warning, because its left side is a postfix chain, not the right side of an operator.
 
 **A multi-line list with a trailing comma (examples 13 and 22).**
 
@@ -741,7 +770,18 @@ let total = first_price⏎
     - discount
 ```
 
-This is **two** statements: `let total = first_price` and the expression `-discount`. The second does nothing, and a later stage warns about an unused value. The fix is to end the first line with `-`.
+This is **two** statements: `let total = first_price` and the expression `-discount`. The fix is to end the first line with `-`.
+
+This is a trap even when it type-checks. If the line starting with `-` is the **last line of a block**, it becomes the block's value:
+
+```quell
+fn score() -> Int {·
+    compute_base(x)⏎
+        - penalty⏎
+}
+```
+
+Here the function returns `-penalty`. Because the newline rule is settled and `-y` alone on a last line is valid code, this is not an error. Instead the parser gives a **warning**, decided from tokens alone: a statement that starts with a prefix `-` or `~`, when the statement before it in the same block (or file) is an expression statement, a `let` or `var`, or an assignment, gets "this line starts with `-`, so it is a new statement. To continue the line above, end that line with `-`. To make a negative value here on purpose, write `(-penalty)`." Writing the parentheses silences the warning. `match` arms are not statements, so an arm such as `-1 => "minus one"` never gets it.
 
 **`if` and `else` on separate lines.**
 
@@ -803,7 +843,7 @@ if done {·
 }
 ```
 
-`return` is not in the continue-after set, so this returns nothing, and `cleanup()` is a separate statement (a later stage warns that it can never run).
+`return` is not in the continue-after set, so this returns nothing, and `cleanup()` is a separate statement (a later stage warns that it can never run). This is true outside `( )` and `[ ]` only. Inside them line breaks are removed (rule 2), so a `return` at the end of a line inside a call takes the next line as its value ([grammar.md, 6.19](grammar.md#619-jump-expressions)).
 
 **Match arms, including a negative number.**
 
@@ -835,6 +875,8 @@ if ready⏎
 ```
 
 The line break after `ready` is significant, so the parser reports: "the `{` that opens this block must be on the same line as the `if`". The same applies to every block (functions, loops, `match`, structs). This keeps the rule simple and makes the style uniform.
+
+Inside `( )` and `[ ]` the line break is removed (rule 2), so the newline rules alone would accept `(if ready` with `{ 1 } else { 2 })` on the next line. To keep one rule everywhere, the parser also checks the line-break flag that every token carries: a `{` that opens the **body of a keyword construct** must not have a line break before it, inside brackets or not. The constructs are `if`, `else`, `for`, `parallel for`, `while`, `repeat`, `match`, `fn`, `struct`, `enum`, `trait`, `extend`, `test`, `defer`, `group`, `unsafe`, `spawn`, `comptime` and the binding form of `catch`. A block that is just a value (for example after `=` or `=>`) may start on the next line where the newline rules allow it.
 
 ---
 
