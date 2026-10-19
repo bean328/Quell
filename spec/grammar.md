@@ -86,7 +86,7 @@ TopElement  = Item | Statement ;
 
 PLAN section 4.13 says top-level code runs only in the program's entry file. The parser handles this with a **file role** given to it by the build driver. There are exactly two roles, and every file has one:
 
-- An **entry file** may contain items and statements in any order. The entry files are: the file given to `quell run` (such as `19_modules/main.ql` or `20_testing.ql`); the main file of a program package, which in the examples is `main.ql` at the package root (`28_c_interop/main.ql`, `29_embedded_blink/main.ql`); and every code example in a doc comment ([lexical.md, 4.3](lexical.md#43-doc-comments)).
+- An **entry file** may contain items and statements in any order. The entry files are: the single `.ql` file named on the command line of any `quell` command that takes one, such as `quell run`, `quell test`, `quell build` or `quell check` (for example `19_modules/main.ql` or `20_testing.ql`), so a file has the same role whichever command reads it; the main file of a program package, which in the examples is `main.ql` at the package root (`28_c_interop/main.ql`, `29_embedded_blink/main.ql`); and every code example in a doc comment ([lexical.md, 4.3](lexical.md#43-doc-comments)).
 - A **library file** may contain only items. The library files are all other files: the main module of a library package (`21_library/src/lib.ql`, which `import` reaches as "a package's main module", section 3.9) and every other module (`geometry/point.ql`).
 
 Exactly which file of a package is its main file, and how the build tool knows whether a package is a program or a library, belongs to the build tool and its manifest, not to this syntax spec. The examples follow the layout above; making it official is an [open question](README.md#open-questions).
@@ -402,7 +402,7 @@ ExprStmt      = Expr ;
 ```
 
 - Any expression can be a statement: calls (`print(x)`), `if`, `match`, `group { }`, `try save(tasks, file)`, `return x`, `break`.
-- **A statement that starts with `-` or `~`** right after an expression statement, a `let` or `var`, or an assignment in the same block (or file) gets a **parser warning**, because it is most likely the second half of a split line: "this line starts with `-`, so it is a new statement. To continue the line above, end that line with `-`. To make a negative value here on purpose, write `(-penalty)`." This matters most on the last line of a block, where `-penalty` silently becomes the block's value ([lexical.md, 12.6](lexical.md#126-worked-examples)).
+- **A statement that starts with `-` or `~`** gets a **parser warning** when it is most likely the second half of a split line. That is when all three hold: (1) the statement before it in the same block (or file) is an expression statement, a `let` or `var`, or an assignment; (2) that previous statement does not end with `}`; (3) the line with the `-` or `~` is indented further than the line on which the previous statement starts. The message is "this line starts with `-`, so it is a new statement. To continue the line above, end that line with `-`. To make a negative value here on purpose, write `(-penalty)`." This matters most on the last line of a block, where `-penalty` silently becomes the block's value. The warning looks at indentation, which is allowed because it never changes whether a program is valid. So `if x >= 0 { return 1 }` followed by `-1`, or `let total = xs.sum()` followed by `-total` at the same indentation, never gets it, while an indented continuation line `    - discount` does ([lexical.md, 12.6](lexical.md#126-worked-examples)).
 - An expression statement whose value is not used and that has no effect (such as a lone `-discount` in the middle of a block) is also reported later as a warning.
 
 ### 4.11 `if x = 5` is a compile error
@@ -446,7 +446,7 @@ From the **tightest** binding (level 1) to the **loosest** (level 17):
 Notes on the choices:
 
 - **Bitwise operators bind tighter than comparisons.** C's order, where `a & mask == 0` means `a & (mask == 0)`, is a famous trap. Quell follows Rust and Swift instead.
-- **`not` binds looser than comparisons**, as in Python: `not x == 5` reads as "not (x equals 5)", which is what a beginner means. `not raining and warm` is still `(not raining) and warm`. A `not` directly after a comparison operator (`a == not b`), or after any other operator of levels 3 to 13 (`x ?? not y`, `a + not b`), is an error with the fix "wrap it in parentheses: `a == (not b)`". After `and` and `or` it is fine: `warm and not raining`.
+- **`not` binds looser than comparisons**, as in Python: `not x == 5` reads as "not (x equals 5)", which is what a beginner means. `not raining and warm` is still `(not raining) and warm`. A `not` directly after a comparison operator (`a == not b`), or after any other operator of levels 3 to 13 (`x ?? not y`, `a + not b`), is an error with the fix "wrap it in parentheses: `a == (not b)`". The same holds after a prefix `-`, `~` or `try` (`-not ready`) and at the start of a jump's value after `??` or `catch` (`x ?? return not done`). After `and` and `or` it is fine: `warm and not raining`.
 - **`??` and `catch` sit between ranges and comparisons**, like Kotlin's `?:` and Zig's `catch`. So `x ?? 0 > 5` is `(x ?? 0) > 5`. `??` is right-associative so that chains of fallbacks read left to right.
 - **A fallback with arithmetic needs parentheses.** By the table, `count ?? 0 + 1` would be `count ?? (0 + 1)`, but a reader going left to right expects `(count ?? 0) + 1`. Both type-check, so the program would be silently wrong. So the right operand of `??`, and of the fallback form of `catch`, may not have a binary operator of levels 3 to 9 (`*`, `/`, `div`, `%`, `+`, `-`, `<<`, `>>`, `&`, `^`, <code>&#124;</code>, `..<`, `..=`) at its top level. The parser reports "add parentheses to say which you mean: `(count ?? 0) + 1` or `count ?? (0 + 1)`". Simple fallbacks are not affected: `?? 0`, `?? -1`, `?? "guest"`, `?? f(x)`, `?? a.b`, `catch []`, a jump, and another `??`.
 - **Ranges, `is` and comparisons are non-associative.** `a..<b..<c`, `x is A is B` and `a < b < c` are errors.
@@ -457,7 +457,7 @@ Notes on the choices:
 **Where a table-driven parser needs special cases.** The chain of rules in section 6 and this table describe the same language. A precedence-climbing parser built from the table must add these checks to match the chain exactly:
 
 1. Levels 9, 12 and 13 are non-associative: a second operator of the same level is an error, not a loop.
-2. `not` (level 14) may not be the operand of an operator of levels 3 to 13 (`a == not b`, `x ?? not y`). That is an error with a fix (section 9).
+2. `not` (level 14) may not be the operand of a prefix operator of level 2 (`-not ready`, `try not done`), the operand of an operator of levels 3 to 13 (`a == not b`, `x ?? not y`), or the value of a jump on the right of `??` or `catch` (`x ?? return not done`, whose value is a `CoalesceExpr`, section 6.6). A Pratt parser reads a prefix token in operand position whatever the current binding power, so it must check this. Each case is an error with a parenthesis fix (section 9.1).
 3. Lambdas and jumps are parsed only at the start of a full `Expr` (section 6.1), and jumps also as the right operand of `??` and `catch`, where their value is parsed at level 10 (section 6.6).
 4. The right operand of `??` and of the fallback form of `catch` may not have a top-level operator of levels 3 to 9 (the note above).
 5. The binding form of `catch` ends its operand: after its block, only another `catch` or an operator of level 12 or looser may follow (section 6.5).
@@ -558,7 +558,7 @@ FallbackJump  = "return" [ CoalesceExpr ] | "throw" CoalesceExpr | "break" | "co
 - **No top-level arithmetic on the right** (section 5): `count ?? 0 + 1` is an error with a fix. Write `(count ?? 0) + 1` or `count ?? (0 + 1)`.
 - Right-associative: `a ?? b ?? c` is `a ?? (b ?? c)`.
 - There is no `??=`. `cache ??= load()` lexes as `??` followed by `=`, and the parser reports "Quell has no `??=`: write `cache = cache ?? load()`".
-- `not` can't be the right operand: `flag ?? not visible` is an error with the fix `flag ?? (not visible)` (section 5).
+- `not` can't be the right operand: `flag ?? not visible` is an error with the fix `flag ?? (not visible)` (section 5). Nor can it start the value of a jump there, because that value is a `CoalesceExpr`: `x ?? return not done` is an error with the fix `x ?? return (not done)`.
 
 ### 6.7 Ranges
 
@@ -593,11 +593,12 @@ SpawnExpr     = "spawn" ( Block | PostfixExpr ) ;
 ```
 
 - `-x` negates, `~x` is bitwise not.
-- **Negative number literals.** When `-` is applied directly to an `INT` or `FLOAT` literal, the later check that the number fits its type uses the negated value, so `-9223372036854775808` is a valid `Int` ([lexical.md, 7.1](lexical.md#71-integer-literals)). This matches negative literal patterns (section 8.1).
+- **Negative number literals.** When the operand of a prefix `-` is exactly an `INT` or `FLOAT` literal, with no parentheses and no postfix operator, the later check that the number fits its type uses the negated value, so `-9223372036854775808` is a valid `Int` ([lexical.md, 7.1](lexical.md#71-integer-literals)). This matches negative literal patterns (section 8.1). The test is on the syntax tree, not on token order: `-5` qualifies, while `-5.abs()` does not, because its operand is `5.abs()`.
 - **`-5.abs()` is `-(5.abs())`**, which is -5, because postfix operators bind tighter. When `-` is followed by a number literal and then `.`, the parser gives a warning: "this is `-(5.abs())`; to call the method on -5, write `(-5).abs()`".
 - `try f()` passes an error up. Its operand is everything at level 2 or tighter, so `try fs.read_text(path)` covers the whole call chain, and `try a() + b()` is `(try a()) + b()`.
 - `spawn` starts a task. Its operand is a block (`spawn { ... }`) or a postfix expression that **ends in a call** (`spawn download("photos.zip")`). If the token after `spawn` is `{`, it is always the block form. Anything else, such as `spawn x`, is an error: "`spawn` needs a function call or a block". Like `try`, `spawn` covers the whole postfix chain: `spawn a.b()` spawns the call `a.b()`.
-- `not` is not here: it is at level 14 (section 6.2).
+- `try` and `spawn` are in the continue-after set ([lexical.md, 12.3](lexical.md#123-the-continue-after-set)), like the other prefix operators `~` and `not`, so a line may end with either and the operand starts on the next line. The `{` of `spawn { ... }` must still be on the same line as `spawn`.
+- `not` is not here: it is at level 14 (section 6.2). So a `PrefixExpr` can't contain it: `-not ready` and `try not done` are errors with the fix `-(not ready)` and `try (not done)` (section 5).
 
 ### 6.10 Postfix operators and calls
 
@@ -620,7 +621,7 @@ Arg           = [ IDENT ":" ] ( LambdaExpr | "mut" Place | Expr ) ;
 - **Trailing commas** are allowed, so long calls can be split one argument per line (example 21).
 - **Member access.** `.name` reads a field or names a method. A method call is a member followed by a call: `scores.length()`. Methods always use parentheses, even with no arguments ([examples/README.md](../examples/README.md), item 5). Generic arguments may follow a member name: `text.parse<Int>()`.
 - **Optional member access.** `?.name`: if the value on the left is `none`, the result is `none`. Syntactically, `?.` is just a postfix operator; how far the "skip if missing" reaches along the rest of the chain is a semantic question. Generic arguments may follow it too, exactly as after `.`: `maybe_text?.parse<Int>()`.
-- **Keywords as member names.** After `.` or `?.`, a reserved keyword is read as a name ([lexical.md, 6.1](lexical.md#61-reserved-keywords)), because nothing else can follow there. This lets Quell reach outside names that happen to be Quell keywords, such as `c.div(7, 2)` from C's `stdlib.h` or a JSON field named `in`. Declaring a Quell field or method with a keyword name is not possible in v0.1 ([open question](README.md#open-questions)).
+- **Keywords as member names.** After `.` or `?.`, a reserved keyword is read as a name ([lexical.md, 6.1](lexical.md#61-reserved-keywords)), because nothing else can follow there. This lets Quell reach outside names that happen to be Quell keywords, such as `c.div(7, 2)` from C's `stdlib.h` or a JSON field named `in`. The newline rules treat such a keyword as a name too, so a line that ends with `c.div` ends there ([lexical.md, 12.3](lexical.md#123-the-continue-after-set)). Declaring a Quell field or method with a keyword name is not possible in v0.1 ([open question](README.md#open-questions)).
 - **Indexing.** `scores[0]`, `ages["Kai"]`, `world[hall]`. Only one index expression. A range is one expression, so `text[0..<2]` is allowed by the grammar.
 - **Only names follow `.`.** `pair.0` (numbered access to a tuple element) is not in v0.1. Tuples are taken apart with `let (a, b) = pair` or with `match` ([open question](README.md#open-questions)).
 - **Postfix operators must be on the same line** as what they apply to, except `.` and `?.`, which may start the next line. Outside `( )` and `[ ]`, a `(` or `[` at the start of a line always starts a new statement. Inside them the line break is removed, so it continues the line above, and the parser warns about a likely forgotten comma (section 6.12).
@@ -902,7 +903,7 @@ This is where Quell's naming rule matters to the parser ([lexical.md, 5.4](lexic
 
 - A bare `UPPER_IDENT` (`Sunny`, `Rainy`, `Get`) is always an existing **enum option** (decision 0003).
 - A bare `LOWER_IDENT` (`mm`, `title`, `e`) is always a **new binding**. A bare `LOWER_IDENT` followed by `(` is an error: "a new name can't have `( )`; option names start with a capital letter".
-- A dotted name (`Weather.Sunny`, `Int.max`) is always a reference.
+- A dotted name (`Weather.Sunny`, `Ordering.Less`) is always a reference to an existing enum option, whatever its case. Name resolution checks that it really names an enum option; a dotted constant such as `Int.max` is not an enum option, so it gets the "only enum options can be matched by name" error of section 8.1, with a guard as the fix: `n if n == Int.max => ...`.
 - `true`, `false` and `none` are keywords, so they are literal patterns, never bindings.
 
 So the parser never needs to know which names are in scope to read a pattern.
@@ -975,7 +976,7 @@ Besides plain "expected X" errors, the parser gives these specific messages, eac
 | a forgotten comma in a multi-line list or map | did you forget a comma at the end of the line above? | 6.12 |
 | `shape is not Circle` | write `not (shape is Circle)` | 6.4 |
 | `user is none` | `is` checks a type; to check for a missing value, write `user == none` | 6.4 |
-| `not` right after an operator of levels 3 to 13: `a == not b`, `x ?? not y`, `a + not b` | wrap it in parentheses: `a == (not b)` | 5 |
+| `not` right after an operator of levels 3 to 13 (`a == not b`, `x ?? not y`, `a + not b`), after a prefix `-`, `~` or `try` (`-not ready`), or as the value of a jump after `??` or `catch` (`x ?? return not done`) | wrap it in parentheses: `a == (not b)`, `-(not ready)`, `?? return (not done)` | 5 |
 | `cache ??= load()` | Quell has no `??=`: write `cache = cache ?? load()` | 6.6 |
 | an assignment as the body of a `match` arm or a lambda: `Add => total += x`, `x => total += x` | an assignment needs braces here: `Add => { total += x }` | 4.4 |
 | the rejected syntax of section 11 | see section 11 | 11 |
@@ -984,12 +985,12 @@ After each of these errors the parser continues as if the (first) fix had been a
 
 ### 9.2 Warnings
 
-These programs are valid, but they very likely don't mean what they seem to. The parser finds each one from tokens alone and gives a warning with a fix. Writing the fix (usually parentheses) silences it.
+These programs are valid, but they very likely don't mean what they seem to. The parser finds each one without type information and gives a warning with a fix. Most are found from tokens and line breaks alone; the first row also compares the indentation of two lines, which a warning may do because it never changes whether a program is valid. Writing the fix (usually parentheses) silences it.
 
 | Situation | Message (short form) | Section |
 |---|---|---|
-| a statement starting with `-` or `~` after another statement | this line starts with `-`, so it is a new statement; end the line above with `-`, or write `(-penalty)` | 4.10, lexical 12.6 |
-| a line starting with `.` that attaches to the right side of an operator, a prefix operand, a lambda body or a jump's value | this `.upper()` applies only to `user.name`; wrap the expression in parentheses | 10.17, lexical 12.6 |
+| a statement starting with `-` or `~`, when all three hold: the previous statement in the same block or file is an expression statement, a `let` or `var`, or an assignment; it does not end with `}`; and the `-` line is indented further than the line where it starts | this line starts with `-`, so it is a new statement; end the line above with `-`, or write `(-penalty)` | 4.10, lexical 12.6 |
+| a line starting with `.` or `?.` that attaches to the right operand of a binary operator of levels 3 to 16 (including `??` and the fallback form of `catch`) or to the operand of a prefix `-` or `~` | this `.upper()` applies only to `user.name`; wrap the expression in parentheses | 10.17, lexical 12.6 |
 | a forgotten comma in call arguments, a tuple or parentheses | did you forget a comma at the end of the line above? | 6.12 |
 | `-5.abs()` (`-`, a number literal, then `.`) | this is `-(5.abs())`; write `(-5).abs()` to call the method on -5 | 6.9 |
 | a range whose right end is a number literal followed by `.`: `0..<10.step(2)` | this is `0..<(10.step(2))`; wrap the range in parentheses: `(0..<10).step(2)` | 6.7 |
@@ -1088,7 +1089,7 @@ These always start a new statement, because each of them can start an expression
 
 It always continues the line above. Decision 0004 removed the `.Sunny` shorthand for exactly this reason, so an enum option is written `Sunny` or `Weather.Sunny`.
 
-The `.` then binds like any postfix operator, to the operand right before it. After a binary operator, that operand is only the operator's right side: `user.nickname ?? user.name` followed by `.upper()` on the next line means `user.nickname ?? (user.name.upper())`. The parser gives a warning in that case ([lexical.md, 12.6](lexical.md#126-worked-examples)); a plain chain never gets it.
+The `.` then binds like any postfix operator, to the operand right before it. After a binary operator, that operand is only the operator's right side: `user.nickname ?? user.name` followed by `.upper()` on the next line means `user.nickname ?? (user.name.upper())`. The parser gives a warning exactly when the operand is the right operand of a binary operator of levels 3 to 16 (including `??` and the fallback form of `catch`) or the operand of a prefix `-` or `~` ([lexical.md, 12.6](lexical.md#126-worked-examples)). A plain chain never gets it, including a chain after `return`, `try` or `let`, and a chain that is the whole body of a lambda.
 
 ### 10.18 Lists and maps
 

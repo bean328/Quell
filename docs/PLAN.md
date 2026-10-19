@@ -370,6 +370,7 @@ Libraries decide whether a language lives or dies, so this is designed in from t
 ```text
 quell new my_app             # new program, ready to run
 quell new colors --lib       # new library, ready to publish
+quell check                  # finds every mistake without building anything
 quell run                    # dev mode: instant
 quell build --release        # release mode: maximum speed
 quell test                   # runs all `test` blocks + doc examples
