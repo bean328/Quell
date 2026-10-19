@@ -39,7 +39,7 @@ The spec uses one EBNF notation in both files. `lexical.md` uses it for **lexica
 
 | Notation | Meaning | Example |
 |---|---|---|
-| `Rule = ... ;` | defines the rule named `Rule` | `WhileStmt = "while" Expr Block ;` |
+| `Rule = ... ;` | defines the rule named `Rule` | `WhileStmt = "while" HeaderExpr Block ;` |
 | `"fn"`, `"=>"`, `"{"` | exactly this text: a keyword, operator or punctuation token in syntax rules, or these characters in lexical rules | `"repeat"` |
 | `'"'` | the double quote character (single quotes are used only to write this one character) | `NormalString = '"' ... '"' ;` |
 | `"any"`, `"type"`, `"parallel"`, `"test"`, `"c"` | a **contextual keyword**: an `IDENT` token spelled exactly like this ([lexical.md, 6.2](lexical.md#62-contextual-keywords)) | `"parallel" "for"` |
@@ -64,18 +64,23 @@ More details:
 
 The syntax rules are written for a hand-written **recursive-descent** parser with **precedence climbing** (Pratt parsing) for expressions, as decision 0005 requires. Each rule can be turned into one parsing function.
 
-- In almost every rule, the next token (sometimes the next two) decides which alternative to take. The note after the rule says how.
-- Two places look further ahead, and the notes explain exactly how far: recognizing a lambda with parameters in parentheses ([grammar.md, 6.1](grammar.md#61-the-top-rule)) and telling generic arguments from less-than ([grammar.md, 6.11](grammar.md#611-generic-arguments-in-expressions)).
+- In almost every rule, the next token decides which alternative to take. The note after the rule says how.
+- **The parser never needs more than four tokens of lookahead,** plus two steps that look past a longer stretch. The places that need more than one token:
+  - two tokens: the binding form of `catch` (`catch err {`, [grammar.md, 6.5](grammar.md#65-catch)), a dotted name in a pattern (`name .`, [8.1](grammar.md#81-pattern-syntax)), a named argument (`name :`, [6.10](grammar.md#610-postfix-operators-and-calls)), a lambda with one parameter (`x =>`, [6.1](grammar.md#61-the-top-rule)), `parallel for` and `test "name"` ([10.20](grammar.md#1020-contextual-keywords));
+  - three tokens: a lambda with a `mut` parameter (`mut x =>`, [6.1](grammar.md#61-the-top-rule)) and a range pattern with a negative bound (`-1..=5`, [8.1](grammar.md#81-pattern-syntax));
+  - four tokens: the error for a struct literal with braces (`Point { x:`, [grammar.md, 11](grammar.md#11-rejected-syntax)).
+- **The two longer steps:** recognizing a lambda with parameters in parentheses, which looks at the token after the matching `)` in one step because the lexer records every bracket's partner ([grammar.md, 6.1](grammar.md#61-the-top-rule)); and telling generic arguments from less-than, a speculative parse that is tried at most once per `<` token ([grammar.md, 6.11](grammar.md#611-generic-arguments-in-expressions)).
+- Some checks that only improve an error message look further, such as the fix for a ternary `a ? b : c`, which looks at the rest of the line. They never change whether a program is valid.
 - Where the rules alone allow two readings, [grammar.md, section 10](grammar.md#10-ambiguities-and-how-they-are-resolved) gives the deciding rule. A parser must follow those rules.
-- The binary operator rules in [grammar.md, 6.2 to 6.8](grammar.md#62-logic-or-and-not) are written as a chain of rules, one per precedence level. They describe the same language as the [precedence table](grammar.md#5-precedence-and-associativity), which is the easier form to implement.
+- The binary operator rules in [grammar.md, 6.2 to 6.8](grammar.md#62-logic-or-and-not) are written as a chain of rules, one per precedence level. They describe the same language as the [precedence table](grammar.md#5-precedence-and-associativity), which is the easier form to implement. A parser built from the table must add the few special cases listed right after it.
 
 ### Reading a rule: an example
 
 ```
-RepeatStmt    = "repeat" [ Expr ] Block ;
+RepeatStmt    = "repeat" [ HeaderExpr ] Block ;
 ```
 
-Read it as: the keyword `repeat`, then optionally an expression (the count), then a block. The note after the rule says what decides whether the count is there: if the token after `repeat` is `{`, it always starts the block. So `repeat 3 { ... }` repeats three times and `repeat { ... }` repeats forever.
+Read it as: the keyword `repeat`, then optionally an expression (the count, which like every expression before a body is a `HeaderExpr`), then a block. The note after the rule says what decides whether the count is there: if the token after `repeat` is `{`, it always starts the block. So `repeat 3 { ... }` repeats three times and `repeat { ... }` repeats forever.
 
 ### Markers in examples
 
@@ -111,7 +116,7 @@ In the worked examples of [lexical.md, 12.6](lexical.md#126-worked-examples), `â
 6. [Expressions](grammar.md#6-expressions): [catch](grammar.md#65-catch), [??](grammar.md#66-defaults-), [calls](grammar.md#610-postfix-operators-and-calls), [generic arguments](grammar.md#611-generic-arguments-in-expressions), [lists and maps](grammar.md#612-primary-expressions), [if](grammar.md#615-if), [match](grammar.md#616-match), [concurrency](grammar.md#617-concurrency-and-unsafe-expressions), [lambdas](grammar.md#618-lambdas), [jumps](grammar.md#619-jump-expressions)
 7. [Types](grammar.md#7-types)
 8. [Patterns](grammar.md#8-patterns)
-9. [Errors the parser reports](grammar.md#9-errors-the-parser-reports)
+9. [Errors the parser reports](grammar.md#9-errors-the-parser-reports): [errors](grammar.md#91-errors) and [warnings](grammar.md#92-warnings)
 10. [Ambiguities and how they are resolved](grammar.md#10-ambiguities-and-how-they-are-resolved)
 11. [Rejected syntax](grammar.md#11-rejected-syntax)
 12. [Example coverage](grammar.md#12-example-coverage)
@@ -129,7 +134,7 @@ Decisions 0003 and 0004 settle the look of Quell, but a grammar has to be exact 
 3. **Number literals** ([lexical.md, 7](lexical.md#7-number-literals)): lowercase prefixes `0x`, `0b`, `0o`; underscores only between digits; leading zeros (`007`) are an error, avoiding C's octal trap; no number suffixes; a float needs digits on both sides of the dot.
 4. **Escapes** ([lexical.md, 9.2](lexical.md#92-escapes)): `\n \r \t \0 \\ \" \'` and `\u{...}`. There is no `\{`; a literal brace is `{{`, as decision 0003 says.
 5. **Format specs** ([lexical.md, 9.4](lexical.md#94-format-specs)): a small mini-language, `[width][.precision][kind]`, that covers `.2`, `.1` and `02x` from the examples and nothing more.
-6. **Holes count braces too** ([lexical.md, 9.3](lexical.md#93-interpolation)). Decision 0004 says the format spec starts at the first `:` outside parentheses and brackets. This spec also skips a `:` inside braces. A brace inside a hole always opens a block, and a hole has no line breaks, so such a block holds one statement. No valid program reads differently because of this extension; it only turns some confusing errors into working code.
+6. **Holes count braces too** ([lexical.md, 9.3](lexical.md#93-interpolation)). Decision 0004 says the format spec starts at the first `:` outside parentheses and brackets. This spec also skips a `:` inside braces. A brace among a hole's tokens (after the hole's own opening brace) always opens a block, and a hole has no line breaks, so such a block holds one statement. In string text, `{{` is always a literal brace and is checked before a hole can start, so a hole whose expression starts with a block needs a space: `"{ {x} }"`. No valid program reads differently because of this extension; it only turns some confusing errors into working code.
 7. **Holes are one line and have no comments** ([lexical.md, 9.3](lexical.md#93-interpolation)).
 8. **Multi-line strings** ([lexical.md, 9.5](lexical.md#95-multi-line-strings)): the exact trimming rules, and multi-line raw strings `#"""` ... `"""#`, which combine two settled features the way Swift does.
 9. **Doc comments are exactly three slashes** ([lexical.md, 4.3](lexical.md#43-doc-comments)); `////` is an ordinary comment.
@@ -141,13 +146,13 @@ Decisions 0003 and 0004 settle the look of Quell, but a grammar has to be exact 
 12. **The continue-after set** ([lexical.md, 12.3](lexical.md#123-the-continue-after-set)) lists every operator, including the word operators `div`, `and`, `or`, `not`, `is` and `catch`, plus `,`, `=`, `=>`, `->`, `.`, `?.` and opening brackets.
 13. **The continue-before set** ([lexical.md, 12.4](lexical.md#124-the-continue-before-set)) is `.`, `?.`, `else`, `catch`, `??`, `and` and `or`. Decision 0003 names only `.`. The others were added because none of them can start a statement, so they can never swallow a line that was meant to stand alone. That is the lesson of the `.Sunny` clash fixed in decision 0004.
 14. **A line ending in `>` or `>>`** ([lexical.md, 12.5](lexical.md#125-lines-that-end-with-a-greater-than-sign)). These tokens are left out of the continue-after set because a line often ends with a generic type (`items: List<T>`). Instead, the parser skips the line break after a `>` or `>>` that it uses as an operator. The effect is the one decision 0003 asks for: a line ending with an operator continues.
-15. **The `{` of a block must be on the same line** as the code before it ([lexical.md, 12.6](lexical.md#126-worked-examples)). This follows from the newline rules and keeps the style uniform.
+15. **The `{` of a block must be on the same line** as the code before it ([lexical.md, 12.6](lexical.md#126-worked-examples)). This follows from the newline rules and keeps the style uniform. For the body of a keyword construct (`if`, `for`, `fn`, the binding form of `catch` and so on) the parser also checks it inside `( )` and `[ ]`, where the newline rules alone would allow the line break.
 
 ### Grammar
 
 16. **The precedence table** ([grammar.md, 5](grammar.md#5-precedence-and-associativity)): bitwise operators bind tighter than comparisons (avoiding C's `a & mask == 0` trap); `not` binds looser than comparisons, as in Python; `??` and `catch` sit between ranges and comparisons; `try` and `spawn` cover one postfix chain.
 17. **Comparisons, ranges and `is` don't chain.** `a < b < c` is an error with a fix.
-18. **Lambdas and jumps only as a whole expression** ([grammar.md, 6.1](grammar.md#61-the-top-rule)). A jump may also be the right side of `??` or `catch`, as decision 0004 requires.
+18. **Lambdas and jumps only as a whole expression** ([grammar.md, 6.1](grammar.md#61-the-top-rule)). A jump may also be the right side of `??` or `catch`, as decision 0004 requires; there its value stops at the level of `??` ([grammar.md, 6.6](grammar.md#66-defaults-)). The expression before a body (the header of `if`, `while`, `for`, `parallel for`, `match` and `repeat`) is a `HeaderExpr`, which can't be a lambda or a jump as a whole.
 19. **Generic arguments versus less-than** ([grammar.md, 6.11](grammar.md#611-generic-arguments-in-expressions)): a speculative parse with three conditions, in the style of Swift and C#.
 20. **The `catch` rule** ([grammar.md, 6.5](grammar.md#65-catch)): `catch` followed by a lowercase name (or `_`) and `{` is the binding form; anything else is a fallback.
 21. **`if x = 5` is reported by the parser** ([grammar.md, 4.11](grammar.md#411-if-x--5-is-a-compile-error)), with the fix to write `==`.
@@ -159,17 +164,36 @@ Decisions 0003 and 0004 settle the look of Quell, but a grammar has to be exact 
 27. **A top-level `let` or `var` is always an item** ([grammar.md, 2.1](grammar.md#21-file-structure)), so entry files and library files parse the same way. The parser is told the file's role and reports top-level statements in library files.
 28. **Assignment is a statement**, not an expression, and `let`/`var` always need a starting value ([grammar.md, 4.3 and 4.4](grammar.md#44-assignment)).
 29. **`spawn` takes a block or a call** ([grammar.md, 6.9](grammar.md#69-prefix-operators)).
-30. **`return` takes a value only if one starts on the same line** ([grammar.md, 6.19](grammar.md#619-jump-expressions)).
+30. **`return` takes a value only if one starts on the same line** and does not start with `{` ([grammar.md, 6.19](grammar.md#619-jump-expressions)). So `?? return {` in a loop header leaves the `{` to open the body. Inside `( )` and `[ ]` the value may start on the next line, with a warning.
 31. **`test`, `comptime { }` and `comptime let` are top-level items only**, and no items are declared inside blocks ([grammar.md, 3.10 and 3.11](grammar.md#311-compile-time-items)).
 32. **A parameter of type `type` has an uppercase name** (`T: type`, from example 27), because it holds a type ([lexical.md, 5.3](lexical.md#53-the-naming-rule)). For the same reason a named argument may be uppercase (`field_names(T: Point)`).
 33. **A type can be optional only once** (`Int??` is an error) ([grammar.md, 7.1](grammar.md#71-type-syntax)).
 34. **Extra helpful errors** for habits from other languages: `|` between patterns, struct literals with braces, `::` paths and `++`/`--` ([grammar.md, 11](grammar.md#11-rejected-syntax)).
 
+### Added after review
+
+These choices were made after independent checkers reviewed the first draft. Most of them turn a program that would silently do the wrong thing into an error or a warning with a fix.
+
+35. **Code examples in doc comments are parsed as entry files** ([lexical.md, 4.3](lexical.md#43-doc-comments)), so their top-level `assert` lines are valid. The two file roles are defined so that every file has exactly one ([grammar.md, 2.2](grammar.md#22-entry-files-and-library-files)).
+36. **A reserved word is a name right after `.` or `?.`** ([lexical.md, 6.1](lexical.md#61-reserved-keywords)), so Quell code can reach C functions and JSON fields named `div`, `in` or `match`.
+37. **A fallback with arithmetic needs parentheses** ([grammar.md, 5](grammar.md#5-precedence-and-associativity)). `count ?? 0 + 1` and `parse(a) catch 0 + parse(b)` are errors, because the precedence table and a left-to-right reading disagree about them.
+38. **The binding form of `catch` ends its operand** ([grammar.md, 6.5](grammar.md#65-catch)): `parse(s) catch e { 0 } + 1` needs parentheses.
+39. **`mut` arguments must be places** ([grammar.md, 6.10](grammar.md#610-postfix-operators-and-calls)), and the `Arg` rule tries a lambda first, so `mut entries => ...` has exactly one parse, with or without an argument name.
+40. **Generic arguments may be followed by `{`** ([grammar.md, 6.11](grammar.md#611-generic-arguments-in-expressions)), so `if T == List<Int> { ... }` works. Generic arguments may also follow `?.`. The speculation is tried once per `<` and has no side effects.
+41. **Lambda parameters are recognized whatever their case** ([grammar.md, 6.1](grammar.md#61-the-top-rule)), so `Item => ...` gets the naming error with a fix instead of a confusing one.
+42. **Warnings for code that is valid but very likely wrong** ([grammar.md, 9.2](grammar.md#92-warnings)): a line starting with `-` after another statement, a line starting with `.` that applies only to the right side of an operator, a forgotten comma inside brackets, `-5.abs()`, `0..<10.step(2)`, `try` on the left of `catch`, and generic arguments split over lines. A forgotten comma in a multi-line list or map literal is an error.
+43. **More messages for habits from other languages** ([grammar.md, 9.1](grammar.md#91-errors)): `is not`, `is none`, `??=`, `not` after an operator, and an assignment as the body of a `match` arm or a lambda.
+44. **A hole that is never closed** ends at the end of the line, with an error that suggests `{{` or a raw string ([lexical.md, 9.3](lexical.md#93-interpolation)).
+45. **A negative number literal** is range-checked as one value, so `-9223372036854775808` is a valid `Int` ([lexical.md, 7.1](lexical.md#71-integer-literals)).
+46. **Spaces between tokens never matter** ([lexical.md, 3](lexical.md#3-whitespace-and-line-breaks)): `Stack <String>()` and `- 1` parse the same as `Stack<String>()` and `-1`.
+47. **Generic parameters may be split over lines** with the closing `>` on its own line ([grammar.md, 3.4](grammar.md#34-generic-parameters)), like an import list.
+48. **The formatter's `=` rule applies whatever the return type** ([grammar.md, 3.3](grammar.md#33-functions)). Decision 0004 states it with no exception, so `fn greet(name: String) = print("Hi {name}")` is the formatted form. Examples 06, 15, 17 and 18 were updated to match.
+
 ---
 
 ## Open questions
 
-These are left open on purpose. v0.1 either rejects the syntax or leaves it out, so deciding later can't break existing programs. Item 1 is different: it comes from the settled decisions themselves.
+These are left open on purpose. v0.1 either rejects the syntax or leaves it out, so deciding later can't break existing programs. Items 1, 21 and 24 are different: they come from the settled decisions themselves, so changing them needs a new decision record.
 
 1. **Where `mut` goes in lambdas and in function parameters.** The settled decisions write a changeable function parameter as `counter: mut Counter` (`mut` in the type) and a changeable lambda parameter as `mut entries => ...` (`mut` before the name). A typed lambda parameter therefore reads `(mut list: List<Int>) => ...`, while the same function parameter reads `list: mut List<Int>`. This spec implements both exactly as decided and makes the mixed form an error with a fix ([grammar.md, 6.18](grammar.md#618-lambdas)). Whether the two should be made consistent needs a new decision.
 2. **The naming style beyond the first letter.** The first letter of a declared name is checked by the parser. Whether the rest of the style (no `camelCase`, no `SCREAMING_CASE`) is an error or a warning is not decided ([lexical.md, 5.3](lexical.md#53-the-naming-rule)).
@@ -191,3 +215,9 @@ These are left open on purpose. v0.1 either rejects the syntax or leaves it out,
 18. **Compound assignment for `div`** ([grammar.md, 4.4](grammar.md#44-assignment)).
 19. **Tuple assignment** such as `(a, b) = (b, a)` ([grammar.md, 4.4](grammar.md#44-assignment)).
 20. **Characters made of several code points**, such as an emoji with a skin tone. The lexer accepts one Unicode scalar value per character literal; whether `Char` should hold more is a type system question ([lexical.md, 8](lexical.md#8-character-literals)).
+21. **Taking structs apart in patterns**, such as `Point(x, y) => ...`. Decision 0003 says that in patterns, capitalized names are always enum options, so v0.1 matches only enum options by name ([grammar.md, 8.1](grammar.md#81-pattern-syntax)). Allowing struct patterns would need a new decision that revises that sentence.
+22. **Which file of a package is its main file**, and how the build tool knows whether a package is a program or a library. The examples use `main.ql` at the root of a program package and `src/lib.ql` in a library. This belongs to the build tool and its manifest (PLAN 6.2), which don't say it yet ([grammar.md, 2.2](grammar.md#22-entry-files-and-library-files)). Also open: whether top-level statements are allowed on a target with no operating system (example 29).
+23. **Declaring fields and methods whose names are keywords.** Code can already reach such names after `.` (36 above), but a `@derive(Json)` struct can't declare a field named `in` or `is` to mirror a JSON key. That needs an escape syntax or a renaming attribute, which is a language change ([lexical.md, 6.1](lexical.md#61-reserved-keywords)).
+24. **Names in scripts without case.** A name that starts with a letter from a script without case (Chinese, Japanese, Arabic and others) is always a `LOWER_IDENT`, so under the settled naming rule it can name variables and functions but never a type or an enum option ([lexical.md, 5.2](lexical.md#52-upper-and-lower-names)). Whether those programmers need another way to name types needs a decision that revises the naming rule of 0003.
+25. **Taking tuples apart in lambda parameters**, such as `ages.map((name, age) => ...)` for a lambda that receives one tuple. In v0.1 `(a, b) =>` always means two parameters ([grammar.md, 6.18](grammar.md#618-lambdas)), while `for (name, age) in ages` takes the tuple apart. Making the two consistent needs a decision.
+

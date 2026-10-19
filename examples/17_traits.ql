@@ -26,9 +26,7 @@ struct Square: Shape {
 
 // A trait as a parameter type works with any Shape. It's just as fast as
 // writing a separate function for each type, because the compiler does that for you.
-fn print_summary(shape: Shape) {
-    print(shape.summary())
-}
+fn print_summary(shape: Shape) = print(shape.summary())
 
 print_summary(Circle(radius: 1.0))
 print_summary(Square(side: 2.0))

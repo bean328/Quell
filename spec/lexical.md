@@ -230,8 +230,8 @@ These 5 words are ordinary identifiers everywhere except in one specific positio
 
 | Word | Keyword only when | Why it is contextual |
 |---|---|---|
-| `any` | it starts a type, followed by a type: `List<any Shape>` | `any` is a common method name (`items.any(x => x > 3)`). In type position a lowercase name can never be a user type (types are PascalCase), so there is no clash. |
-| `type` | it is a whole type: `T: type` | `type` is a very common field and variable name (`token.type`). In type position a lowercase name can never be a user type. |
+| `any` | it starts a type and the next token is an identifier: `List<any Shape>` | `any` is a common method name (`items.any(x => x > 3)`). In type position a lowercase name can never be a user type (types are PascalCase), so there is no clash. |
+| `type` | it starts a type and the next token is not `.` or `<`: `T: type`, `type?` | `type` is a very common field and variable name (`token.type`). In type position a lowercase name can never be a user type. |
 | `parallel` | it starts an expression and is directly followed by `for` (no line break between) | An identifier is never directly followed by the keyword `for`, so `parallel for` cannot mean anything else. `parallel` stays usable as a name, for example for a setting. |
 | `test` | it starts a top-level item and is directly followed by a string literal: `test "name" { }` | An identifier is never directly followed by a string literal. `test` is a natural variable name in testing code (`let test = load_case()`). |
 | `c` | it comes right after `import` and is followed by a string literal: `import c "sqlite3.h"` | `c` is an extremely common short name, and example 28 uses it as a value (`c.sqlite3_libversion()`). `import c` followed by a line break is an ordinary import of a module named `c`. |
@@ -323,7 +323,7 @@ An exponent is recognized only when `e` or `E` is followed by a digit, or by `+`
 
 ### 7.5 What may follow a number
 
-A number literal must not be directly followed by an identifier character or another digit-like character. `3px`, `10ms` and `0x1g` are errors: "a number can't be directly followed by a letter". Quell has no number suffixes; the type comes from context or a conversion such as `UInt8(255)`.
+A number literal must not be immediately followed (with no space between) by an identifier character or another digit-like character. `3px`, `10ms` and `0x1g` are errors: "a number can't be directly followed by a letter". Quell has no number suffixes; the type comes from context or a conversion such as `UInt8(255)`.
 
 ---
 

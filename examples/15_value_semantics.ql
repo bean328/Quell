@@ -11,9 +11,7 @@ struct Counter {
 }
 
 // A normal parameter is read-only: the function can look but not change it
-fn show_doubled(counter: Counter) {
-    print("doubled: {counter.count * 2}")
-}
+fn show_doubled(counter: Counter) = print("doubled: {counter.count * 2}")
 
 // A `mut` parameter may be changed by the function
 fn bump(counter: mut Counter) {

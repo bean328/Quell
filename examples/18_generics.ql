@@ -27,9 +27,7 @@ show_largest([2.5, 7.5, 1.0])
 struct Stack<T> {
     items: List<T> = []
 
-    mut fn push(item: T) {
-        self.items.append(item)
-    }
+    mut fn push(item: T) = self.items.append(item)
 
     mut fn pop() -> T? = self.items.remove_last()
 

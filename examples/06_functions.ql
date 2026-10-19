@@ -16,9 +16,7 @@ fn safe_divide(a: Int, b: Int) -> Float {
 }
 
 // Default values, and arguments you can name when you call
-fn greet(name: String, greeting: String = "Hello") {
-    print("{greeting}, {name}!")
-}
+fn greet(name: String, greeting: String = "Hello") = print("{greeting}, {name}!")
 
 print(square(4))
 print(describe_number(7))
