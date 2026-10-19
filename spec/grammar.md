@@ -36,7 +36,7 @@ A short summary (the full description is in the [README](README.md#how-to-read-t
 | `"any"`, `"type"`, `"parallel"`, `"test"`, `"c"` | a **contextual keyword**: an `IDENT` token with exactly this spelling |
 | `IDENT`, `INT`, `NEWLINE`, ... | a token kind from [lexical.md](lexical.md#13-summary-of-token-kinds) |
 | `A B` | `A` followed by `B` |
-| `A \| B` | `A` or `B` |
+| <code>A &#124; B</code> | `A` or `B` |
 | `[ A ]` | `A` is optional |
 | `{ A }` | `A` repeated zero or more times |
 | `( A B )` | grouping |
@@ -80,6 +80,7 @@ TopElement  = Item | Statement ;
 - **How the parser tells them apart:** a `TopElement` is an `Item` if its first token is `@`, `pub`, `fn`, `mut`, `static`, `comptime`, `struct`, `enum`, `trait`, `extend`, `import`, `let` or `var`, or if it is the contextual keyword `test` followed by a string literal. Otherwise it is a `Statement`.
 - So a `let` or `var` at the top level is always an item (a `GlobalLet`, section 3.12), never a `LetStmt`. In an entry file it still runs in order with the other statements; that is a matter for later stages.
 - `mut` and `static` at the top level start a function declaration, which the parser then reports as an error ("`mut fn` and `static fn` only make sense inside a type").
+- `comptime` starts three different items. The token after it decides: `fn` gives a `FnDecl`, `let` or `var` a `GlobalLet`, and `{` a `ComptimeBlock`.
 
 ### 2.2 Entry files and library files
 
@@ -252,7 +253,8 @@ All the forms in the examples:
 | `import c "sqlite3.h"` | a C header, used as `c.sqlite3_libversion()` |
 
 - A module path is a list of names separated by dots. `geometry/point.ql` is imported as `geometry.point`.
-- The name list in `{ }` may be split over several lines, with or without a trailing comma. This is one of only two places where `{ }` does not hold a block (the other is a hole in a string).
+- The name list in `{ }` may be split over several lines, with or without a trailing comma ([lexical.md, 12.6](lexical.md#126-worked-examples)). The braces here hold names, not a block. This is allowed because an import is never in expression position (section 10.11).
+- `ModulePath` and the import list both use `.`: after a `.`, an `IDENT` continues the path and `{` starts the list.
 - `import c` is recognized when `c` is followed by a string literal. The string must be plain.
 - Imports are items, so the grammar allows them anywhere at the top level of a file (never inside a block). Whether they must come before other items is an [open question](README.md#open-questions). Aliases (`import x as y`) are not in v0.1.
 
@@ -441,7 +443,7 @@ Notes on the choices:
 - **Ranges, `is` and comparisons are non-associative.** `a..<b..<c`, `x is A is B` and `a < b < c` are errors.
 - **Chained comparisons are an error**, not a feature: `a < b < c` gets "comparisons can't be chained: write `a < b and b < c`". This keeps one meaning for `<` and avoids the different behaviours of Python (chains) and C (compares a Bool to a number).
 - **Prefix operators bind tighter than binary ones but looser than postfix ones.** `-2.pow(2)` is `-(2.pow(2))`. `try a.b().c()` covers the whole chain.
-- **Level 17 forms** are not operators in a table sense. They can only appear where the grammar allows a full expression, and on the right of `??` and `catch` (section 6.1). Their right side takes everything to the end of the expression.
+- **Level 17 forms** are not operators in a table sense. They can only appear where the grammar allows a full expression (section 6.1). Jumps (`return`, `throw`, `break`, `continue`) may also appear on the right of `??` and `catch`; lambdas may not. Their right side takes everything to the end of the expression.
 
 ---
 
@@ -454,7 +456,7 @@ Expr          = LambdaExpr | JumpExpr | OrExpr ;
 ```
 
 - `Expr` is used wherever the grammar needs "an expression": values of `let` and assignments, statements, call arguments, list elements, map keys and values, indexes, conditions, `match` scrutinees and arm bodies, lambda bodies, default values, `= expr` function bodies, `assert` parts and string holes.
-- **Lambdas and jumps (`return`, `throw`, `break`, `continue`) are only allowed as a whole `Expr`**, and on the right of `??` and `catch` (sections 6.5 and 6.6). `a + return b` and `a + x => x` are errors ("wrap this in parentheses"). This keeps the right side of each lambda and jump easy to see.
+- **Lambdas and jumps (`return`, `throw`, `break`, `continue`) are only allowed as a whole `Expr`.** The one exception: a jump may also be the right side of `??` or `catch` (sections 6.5 and 6.6), as in `?? return none`. `a + return b`, `a + x => x` and `f ?? x => x` are errors ("wrap this in parentheses"). This keeps the right side of each lambda and jump easy to see.
 - **How the parser recognizes a lambda** at the start of an `Expr` (looking ahead, without consuming anything):
   1. a `LOWER_IDENT` or `_` followed by `=>`;
   2. `mut` followed by a `LOWER_IDENT` or `_` followed by `=>`;
@@ -514,7 +516,7 @@ There are two forms:
 - An uppercase name after `catch` is always a fallback value, so `load() catch Empty` works even before a `{`.
 - `catch _ { ... }` runs the block and ignores the error.
 - `catch` is left-associative: `a() catch b() catch 0` is `(a() catch b()) catch 0`.
-- A line may start with `catch`; it continues the line above.
+- A line may start or end with `catch`; either way it joins the two lines (`catch` is in both the continue-before and the continue-after sets).
 - The one trap is a fallback variable in a condition: see section 10.4.
 
 ### 6.6 Defaults: ??
@@ -574,16 +576,17 @@ PostfixOp     = CallSuffix
               | "[" Expr "]" ;
 CallSuffix    = "(" [ ArgList ] ")" ;
 ArgList       = Arg { "," Arg } [ "," ] ;
-Arg           = [ LOWER_IDENT ":" ] [ "mut" ] Expr ;
+Arg           = [ IDENT ":" ] [ "mut" ] Expr ;
 ```
 
 - **Calls.** `print(x)`, `greet("Sam", greeting: "Welcome")`, `heal(mut hero, 20)`. Creating a value uses the same syntax: `Point(x: 1.0, y: 2.0)`, `Rainy(mm: 2.5)`, `Stack<String>()`.
-- **Named arguments** are `name: value`. A name followed by `:` at the start of an argument is always an argument name, since no expression contains `name :`. Whether named and positional arguments are in a valid order is checked later.
+- **Named arguments** are `name: value`. An identifier followed by `:` at the start of an argument is always an argument name, since no expression contains `name :` outside brackets. The name may be of either class, because a parameter of type `type` has an uppercase name (`field_names(T: Point)`). Whether the names exist, and whether named and positional arguments are in a valid order, is checked later.
 - **`mut` arguments** (`bump(mut c)`) show that the call may change the value. If an argument starts with `mut` followed by a name and `=>`, it is a lambda instead (section 10.7).
 - **Trailing commas** are allowed, so long calls can be split one argument per line (example 21).
 - **Member access.** `.name` reads a field or names a method. A method call is a member followed by a call: `scores.length()`. Methods always use parentheses, even with no arguments ([examples/README.md](../examples/README.md), item 5). Generic arguments may follow a member name: `text.parse<Int>()`.
 - **Optional member access.** `?.name`: if the value on the left is `none`, the result is `none`. Syntactically, `?.` is just a postfix operator; how far the "skip if missing" reaches along the rest of the chain is a semantic question.
-- **Indexing.** `scores[0]`, `ages["Kai"]`, `world[hall]`. Only one index expression.
+- **Indexing.** `scores[0]`, `ages["Kai"]`, `world[hall]`. Only one index expression. A range is one expression, so `text[0..<2]` is allowed by the grammar.
+- **Only names follow `.`.** `pair.0` (numbered access to a tuple element) is not in v0.1. Tuples are taken apart with `let (a, b) = pair` or with `match` ([open question](README.md#open-questions)).
 - **Postfix operators must be on the same line** as what they apply to, except `.` and `?.`, which may start the next line. A `(` or `[` at the start of a line always starts a new statement.
 
 ### 6.11 Generic arguments in expressions
@@ -597,7 +600,7 @@ GenericArgs   = "<" Type { "," Type } [ "," ] ">" ;
 > When the parser is at a `<` that directly follows the name in a `NameExpr` or after `.`, it tries to read `GenericArgs` with the type grammar, without committing. It accepts them as generic arguments only if all three hold:
 >
 > 1. the type grammar reads a complete `GenericArgs`;
-> 2. the outermost closing `>` is a whole token, or the last `>` of a split `>>` (it does not leave a `=` or `>=` behind; section 7.3);
+> 2. the outermost closing `>` uses up its token completely: it is a whole `>` token, or the `>` left over after an inner list split a `>>`. It must not split a token and leave `>`, `=` or `>=` behind (section 7.3);
 > 3. the token after the closing `>` is `(`, or a token that **cannot start an expression**.
 >
 > Otherwise the parser goes back to the `<` and reads it as less-than.
@@ -608,7 +611,7 @@ Why this is safe:
 
 - The type grammar fails quickly on anything that is not a type (`a < b + c` fails at `+`; `age < 0` fails at `0`), so ordinary comparisons are never read as generics.
 - If the generic reading succeeds, the less-than reading would have to read `a < b > ...` as a chain of two comparisons, which Quell already rejects. So choosing the generic reading takes away no valid program, except in one case: a call argument list with two comparisons around a comma, `f(a < b, c > (d))`. Rule 3 reads this as `f` called with one argument, `a<b, c>(d)`. To pass two comparisons, write `f((a < b), c > (d))` or `f(a < b, c > d)`.
-- Rule 2 keeps `a < b >> c` (a comparison with a shift) and `a < b >= c` from being misread.
+- Rule 2 keeps `a < b >> c` (a comparison with a shift) and `a < b >= c` from being misread. `List<List<Int>>()` still works, because the inner list takes the first `>` of `>>` and the outer list takes the `>` that is left.
 - It also works for a generic type used as a value, such as `field_names(List<Int>)`, because `)` cannot start an expression.
 
 ### 6.12 Primary expressions
@@ -778,7 +781,7 @@ When the parser reads `GenericArgs` or `GenericParams` and needs a closing `>`:
 | `>>=` | consumes one `>`; the current token becomes `>=` |
 | anything else | error: "expected `>` to close the generic arguments" |
 
-So `exits: List<Handle<Room>> = []` and `var x: List<Int>= []` both work. In expression position, rule 2 of section 6.11 limits this: the outermost list must not leave a `=` or `>=` behind.
+So `exits: List<Handle<Room>> = []` and `var x: List<Int>= []` both work. In expression position, rule 2 of section 6.11 limits this: the outermost list must not leave anything behind. In type position there is no such limit.
 
 ### 7.4 Where types appear
 
@@ -833,8 +836,8 @@ ListPattern   = "[" [ Pattern { "," Pattern } [ "," ] ] "]" ;
 
 This is where Quell's naming rule matters to the parser ([lexical.md, 5.4](lexical.md#54-what-the-parser-relies-on)):
 
-- A bare `UPPER_IDENT` (`Sunny`, `Rainy`, `Get`, `Point`) is a **reference** to an existing option, type or constant.
-- A bare `LOWER_IDENT` (`mm`, `title`, `e`) is always a **new binding**.
+- A bare `UPPER_IDENT` (`Sunny`, `Rainy`, `Get`, `Point`) is a **reference** to an existing enum option or type.
+- A bare `LOWER_IDENT` (`mm`, `title`, `e`) is always a **new binding**. A bare `LOWER_IDENT` followed by `(` is an error: "a new name can't have `( )`; option names start with a capital letter".
 - A dotted name (`Weather.Sunny`, `Int.max`) is always a reference.
 - `true`, `false` and `none` are keywords, so they are literal patterns, never bindings.
 
@@ -896,6 +899,8 @@ Besides plain "expected X" errors, the parser gives these specific messages, eac
 | an item inside a block | declare this at the top level of the file | 4.2 |
 | a top-level statement in a library file | code at the top level only runs in the entry file | 2.2 |
 | `String??` | a type can only be optional once | 7.1 |
+| `foo(x) =>` in a pattern (a lowercase name with `( )`) | a new name can't have `( )`; option names start with a capital letter | 8.2 |
+| `catch err` with its `{` on the next line | put `{` on the same line as `catch err` | 10.3 |
 | the rejected syntax of section 11 | see section 11 | 11 |
 
 ---
@@ -915,6 +920,8 @@ The lexer produces `>>`; the parser splits it when closing generic arguments (se
 ### 10.3 The two forms of catch
 
 `e catch fallback` versus `e catch name { block }`. The binding form is chosen exactly when `catch` is followed by a `LOWER_IDENT` or `_` and then `{` (section 6.5). A lowercase name directly followed by `{` is never a valid expression, so the fallback form loses nothing.
+
+As with every block, the `{` must be on the same line as the name. If it is on the next line, `catch err` is read as the fallback form and the block becomes a separate statement. The parser reports this case: when a statement ends with `catch` and a lowercase name, and the next statement is a plain block, it says "put `{` on the same line as `catch err`".
 
 ### 10.4 catch inside a condition
 
@@ -950,7 +957,16 @@ In `"{price:.2}"` the colon starts a format spec; in `"{greet(name: "Ava")}"` it
 
 ### 10.11 `{` always opens a block in code
 
-At the start of a statement, and in any expression position, `{` opens a block. Quell has no map literals with braces, no struct literals with braces and no trailing lambdas, so `{` never continues an expression. This is what makes `if x {`, `for x in items {`, `while n > 0 {`, `match x {` and `repeat n {` unambiguous with no special "no struct literal here" rule (the problem Rust has). The only places `{ }` is not a block are import name lists and string holes, and neither is in expression position.
+At the start of a statement, and in any expression position, `{` opens a block. Quell has no map literals with braces, no struct literals with braces and no trailing lambdas, so `{` never continues an expression. This is what makes `if x {`, `for x in items {`, `while n > 0 {`, `match x {` and `repeat n {` unambiguous with no special "no struct literal here" rule (the problem Rust has).
+
+Braces that are not a block appear only where a keyword has already said what follows: the bodies of `struct`, `enum`, `trait` and `extend`, the arm list of `match`, and the name list of `import`. None of these is in expression position. A hole in a string is marked by `{` too, but holes are found by the lexer inside a `STRING` token, so the parser never sees that brace.
+
+The one expression-level case that needs care is a construct that takes a block right after an expression: the conditions of `if` and `while`, the items of `for`, the count of `repeat` (when it is not `{` itself, section 4.7) and the scrutinee of `match`. The rule is simple because no operator starts with `{`:
+
+- A `{` that comes where an operator could come (after a complete operand) ends the expression and opens the body. In `if ready {`, the `{` follows the operand `ready`.
+- A `{` that comes where an operand is expected starts a block expression, or the block of `group`, `unsafe`, `spawn` or a `catch` binding. So `if unsafe { flag } { ... }` has the condition `unsafe { flag }`. Such conditions are legal but hard to read; the formatter wraps them in parentheses.
+
+This is also why `group`, `unsafe`, `spawn` and `defer` are reserved words ([lexical.md, 6.3](lexical.md#63-why-the-others-are-reserved)): if `group` were a name, `if group {` would have two readings.
 
 ### 10.12 A top-level let: item or statement
 
@@ -1000,6 +1016,22 @@ It always continues the line above. Decision 0004 removed the `.Sunny` shorthand
 
 `?` appears only at the end of a type. In an expression, a `?` token can only be an attempted ternary or a Rust-style `?`, and both are rejected syntax (section 11).
 
+### 10.24 A line that starts with `else`, `catch`, `??`, `and` or `or`
+
+It always continues the line above ([lexical.md, 12.4](lexical.md#124-the-continue-before-set)). None of these words can start a statement, an item, a member or a match arm, so joining the lines never changes the meaning of code that was already valid. It only makes more layouts valid, such as `}` and `else {` on separate lines.
+
+### 10.25 The three uses of comptime
+
+`comptime fn`, `comptime let` (or `var`) and `comptime { }` are told apart by the token right after `comptime` (section 2.1).
+
+### 10.26 Assignment or expression statement
+
+Both start with an expression. The parser reads the expression first and then looks at the next token: an assignment operator makes it an `AssignStmt`, and the left side is then checked to be a place (section 4.4). This needs no backtracking.
+
+### 10.27 Fields, methods and options in a body
+
+In a `struct` body, a member that starts with an identifier is a field, and one that starts with `fn`, `mut`, `static` or `comptime` is a method (after any attributes and `pub`). In an `enum` body, an identifier starts an option. A `mut` here is always a method modifier, because fields and options never start with `mut`.
+
 ---
 
 ## 11. Rejected syntax
@@ -1018,12 +1050,17 @@ The parser and lexer recognize these forms only to explain the Quell way. Each o
 | `.Sunny` (an expression that starts with `.`) | parser | enum options are written by name: `Sunny`, or `Weather.Sunny` |
 | `ok ? a : b` | parser | Quell has no `? :`; `if` gives a value: `if ok { a } else { b }` |
 | `value?` (a Rust-style `?` after an expression) | parser | use `try value` to pass the error up, or `value ?? fallback` for a missing value |
+| <code>6 &#124; 7 =&gt; ...</code> (a bar between patterns) | parser | patterns are joined with `or`: `6 or 7 => ...` |
+| `Point { x: 1.0, y: 2.0 }` (a struct literal with braces) | parser | values are created with parentheses: `Point(x: 1.0, y: 2.0)` |
+| `Weather::Rainy` | parser | paths use `.`: `Weather.Rainy` |
+| `count++`, `count--` | parser | write `count += 1` or `count -= 1` |
 
 Notes:
 
 - **`.Sunny`.** In argument position (`paint(.Red)`), the parser sees `.` where an expression must start and gives the message directly. At the start of a line (for example a `match` arm written `.Cloudy => ...`), the newline rules have already joined the line to the one above, so the parser sees `"Maybe a jacket.".Cloudy => ...` and fails at `=>`. When a parse error happens on a line that started with `.` followed by a capitalized name, the parser adds the same message as a note.
 - **`if let` and `let ... else`.** Decision 0004 removed them. After `if`, the keywords `let` and `var` trigger the message. After the value of a `let`, the keyword `else` (which may be on the same line or start the next one) triggers it.
 - **The ternary.** In an expression, after a complete operand, a `?` token (not `?.` or `??`) triggers the message. If a `:` follows later on the line, the fix rewrites the whole thing as an `if`.
+- **The last four rows** are habits from other languages. They are made of valid tokens, so the parser detects them by shape: a `|` token where a pattern could continue; an `UPPER_IDENT` followed on the same line by `{`, an identifier and `:` (outside a condition, where that `{` would be a body); two `:` tokens with nothing between them; and two `+` or two `-` tokens with nothing between them, right after an operand and right before a line break or a closing bracket. The last check matters because `-` is in the continue-after set: without it, `count--` followed by a new line would silently join the two lines.
 
 ---
 

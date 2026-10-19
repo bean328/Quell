@@ -149,10 +149,10 @@ Names that come from outside Quell (for example C functions and types reached th
 Besides the declaration checks, the parser uses the upper/lower class in exactly two places. Nowhere else does capitalization change how code parses.
 
 1. **Patterns.** In a pattern, a bare (undotted) name is read by its class:
-   - an `UPPER_IDENT` is a **reference** to something that already exists: an enum option (`Sunny`, `Rainy(mm)`), a struct type being taken apart (`Point(x, y)`), or a constant;
+   - an `UPPER_IDENT` is a **reference** to something that already exists: an enum option (`Sunny`, `Rainy(mm)`) or a type (a struct being taken apart, `Point(x, y)`);
    - a `LOWER_IDENT` is always a **new binding** that captures the matched value (`mm`, `title`).
 
-   A dotted name in a pattern (`Weather.Rainy`, `Int.max`) is always a reference, whatever its case. Because of this rule, a pattern never needs to know what names are in scope to be parsed, and `Sunny =>` can never accidentally mean "bind anything to a variable called Sunny". To compare against an existing lowercase value, use a guard: `x if x == limit => ...`.
+   A dotted name in a pattern (`Weather.Rainy`, `Int.max`) is always a reference, whatever its case. A bare `LOWER_IDENT` followed by `(` is an error ("a new name can't have `( )`; option names start with a capital letter"). Because of this rule, a pattern never needs to know what names are in scope to be parsed, and `Sunny =>` can never accidentally mean "bind anything to a variable called Sunny". To compare against an existing lowercase value, use a guard: `x if x == limit => ...`.
 
 2. **The `catch` binding form.** `expr catch name { ... }` binds the error only when `name` is a `LOWER_IDENT` (or `_`). An `UPPER_IDENT` after `catch` is a fallback value, such as an enum option (`load() catch Empty`). See [grammar.md, catch](grammar.md#65-catch).
 
@@ -270,15 +270,16 @@ OctDigit     = "0" to "7" ;
 ### 7.2 Float literals
 
 ```
-FLOAT     = DecimalDigits "." DecimalDigits [ Exponent ]
-          | DecimalDigits Exponent ;
+FLOAT         = IntPart "." DecimalDigits [ Exponent ]
+              | IntPart Exponent ;
+IntPart       = "0" | NonZeroDigit { [ "_" ] Digit } ;
 DecimalDigits = Digit { [ "_" ] Digit } ;
-Exponent  = ( "e" | "E" ) [ "+" | "-" ] DecimalDigits ;
+Exponent      = ( "e" | "E" ) [ "+" | "-" ] DecimalDigits ;
 ```
 
 - A float has **digits on both sides of the dot**: `1.52`, `0.5`, `8.0`. `.5` and `5.` are not floats.
 - An exponent is allowed with or without a dot: `2.5e-3`, `1e9`, `6.02E23`. A number with an exponent is always a float.
-- Leading zeros before the dot are allowed only as a single `0` (`0.5`), following the integer rule.
+- The part before the dot follows the integer rule for leading zeros: `0.5` is fine, `00.5` is an error. The part after the dot may have any digits (`1.05`).
 - There are no hex, binary or octal floats.
 
 ### 7.3 The dot rule
@@ -317,6 +318,8 @@ A number literal must not be directly followed by an identifier character or ano
 ```
 CHAR      = "'" ( CharChar | Escape ) "'" ;
 CharChar  = any character except "'", "\" and a line break ;
+Escape    = "\" ( "n" | "r" | "t" | "0" | "\" | '"' | "'" )
+          | "\u{" HexDigit [ HexDigit ] [ HexDigit ] [ HexDigit ] [ HexDigit ] [ HexDigit ] "}" ;
 ```
 
 - A character literal holds exactly **one Unicode scalar value**: `'A'`, `'é'`, `'\n'`, `'\''`.
@@ -340,6 +343,13 @@ Quell has three kinds of string literal. All of them produce a `STRING` token.
 A `STRING` token is a sequence of **segments**. Each segment is either *text* (the characters after escapes have been processed) or a *hole* (an interpolated expression, with an optional format spec). A string with no holes is called a **plain string**. Raw strings are always plain. The grammar requires a plain string in a few places (test names, `import c`, patterns).
 
 ### 9.1 Normal strings
+
+```
+NormalString = '"' { StringChar | Escape | "{{" | "}}" | Hole } '"' ;
+StringChar   = any character except '"', "\", "{", "}" and a line break ;
+Hole         = "{" HoleTokens [ ":" FormatSpec ] "}" ;
+HoleTokens   = the tokens of one expression, ended by the depth rule of 9.3 ;
+```
 
 A normal string starts with `"` and ends at the next `"` that is not escaped and not inside a hole. It cannot contain a raw line break; use `\n`. An unclosed string is an error reported at its opening quote, and the string is assumed to end at the end of the line.
 
@@ -438,11 +448,12 @@ The exact rules:
 1. The opening `"""` must be followed by a line break. Only spaces and tabs may come between them. The first line of content is the line after the opening delimiter.
 2. The closing `"""` must be on its own line, with only spaces and tabs before it. Those spaces and tabs are the **indentation prefix**.
 3. Every content line must start with exactly the indentation prefix (the same characters, tabs and spaces matched one by one). The prefix is removed. A content line that has fewer leading characters than the prefix, or different ones, is an error pointing at that line, with the message: this line is less indented than the closing `"""`.
-4. A content line that holds only spaces and tabs (or nothing) is allowed even if it is shorter than the prefix. It becomes an empty line.
+4. A content line that holds only spaces and tabs (or nothing) never causes the error of rule 3. If it starts with the prefix, the prefix is removed as usual; otherwise it becomes an empty line.
 5. The line break right before the closing line is not part of the string. All other line breaks in the content become `\n`, even if the file uses CR LF.
 6. Spaces at the end of content lines are kept.
 7. Escapes and holes work as in normal strings. A hole must still fit on one line.
 8. `"` and `""` can appear in the content. `"""` cannot; write `\"""`.
+9. The whole multi-line string is **one token**. The line breaks inside it belong to the token, so the [newline rules](#12-the-newline-rules) never see them. The same is true of multi-line raw strings.
 
 So the example above is the string `"Roses are red,\nQuell is fast."`, and `print(poem)` prints two lines, as in [example 09](../examples/09_strings.ql).
 
@@ -457,7 +468,7 @@ let tricky = ##"a raw string can contain "# like this"##
 
 - A raw string starts with one or more `#` followed by `"`. It ends at the first `"` that is followed by **the same number** of `#`. Using more `#` lets the content contain `"#`.
 - A single-line raw string cannot contain a line break.
-- `#"""` starts a **multi-line raw string**, which ends with `"""#` (with the same number of `#`). It follows the multi-line rules of 9.5 (line break after the opening, trimming to the closing line's indentation) but has no escapes and no holes. This combines two settled features in the obvious way; Swift does the same.
+- `#"""` followed by nothing but spaces and tabs up to the end of the line starts a **multi-line raw string**, which ends with `"""#` (with the same number of `#`). If anything else follows `#"""` on the same line, it is a single-line raw string whose text starts with `""`: `#"""hi"""#` is the text `""hi""`. A normal string has no such second reading: `"""` followed by other text on the same line is the error of rule 1 in 9.5. It follows the multi-line rules of 9.5 (line break after the opening, trimming to the closing line's indentation) but has no escapes and no holes. This combines two settled features in the obvious way; Swift does the same.
 - Outside a string, `#` is only valid when it starts a raw string. Any other `#` is an error.
 
 Inside a normal string, `#` has no special meaning: `"#ff8800"` and `"#{i + 1}"` are a normal string whose text starts with `#`.
@@ -552,6 +563,8 @@ The grammar uses `NEWLINE` as the separator between:
 - arms of a `match`,
 - the end of a trait requirement (a function with no body).
 
+It is also allowed in two smaller places: after an attribute that stands on its own line (`@entry` above `fn main()`), and before the `}` that closes an import list. Finally, the parser skips a `NEWLINE` that directly follows a `>` or `>>` it uses as a binary operator (12.5).
+
 Everywhere else, a `NEWLINE` token is a syntax error. That is why the rules below remove line breaks wherever a statement clearly isn't finished.
 
 ### 12.2 The algorithm
@@ -565,7 +578,7 @@ For each token **T** that has at least one line break before it, let **P** be th
 3. **P says "more to come".** P is one of the tokens in the *continue-after* set below.
 4. **T says "I continue the line above".** T is one of the tokens in the *continue-before* set below.
 
-Several line breaks before one token give at most one `NEWLINE`.
+Several line breaks before one token give at most one `NEWLINE`. Line breaks *inside* a token (a multi-line string) are part of that token and are never considered. A block comment that spans lines counts as a line break before the next token (section 4.2).
 
 In pseudocode:
 
@@ -601,14 +614,14 @@ A line that **ends** with one of these tokens continues on the next line:
 | comparison | `==` `!=` `<` `<=` `>=` (not `>`, see 12.5) |
 | bitwise | `&` <code>&#124;</code> `^` `~` `<<` (not `>>`, see 12.5) |
 | logic | `and` `or` `not` |
-| other operators | `..<` `..=` `??` `is` |
+| other operators | `..<` `..=` `??` `is` `catch` |
 | assignment | `=` `+=` `-=` `*=` `/=` `%=` `&=` <code>&#124;=</code> `^=` `<<=` `>>=` |
 | member access | `.` `?.` |
 | arrows | `=>` `->` |
 | separators | `,` |
 | opening brackets | `(` `[` `{` |
 
-This is the decision 0003 rule ("a line continues if it ends with an operator or comma") made exact. `?` (the optional type suffix in `email: String?`) is not an operator and is not in the set, so a field or annotation can end with `?`. Keywords that start an expression, such as `return`, `try` and `throw`, are not in the set: a line ending with `return` returns nothing.
+This is the decision 0003 rule ("a line continues if it ends with an operator or comma") made exact. Every token in the set needs something after it, so a line that ends with one can never be a finished statement. The word operators `div`, `and`, `or`, `not`, `is` and `catch` are operators too, so they are in the set. `?` (the optional type suffix in `email: String?`) is not an operator and is not in the set, so a field or annotation can end with `?`. Keywords that start an expression, such as `return`, `try`, `throw` and `spawn`, are not in the set: a line ending with `return` returns nothing.
 
 ### 12.4 The continue-before set
 
@@ -688,6 +701,29 @@ pub fn mix(a: Color, b: Color) -> Color = Color(·
     b: average(a.b, b.b),·
 )⏎
 ```
+
+**An import list split over lines.**
+
+```quell
+import http.{·
+    Server,·
+    Request,·
+    Response⏎
+}⏎
+```
+
+The `{` of an import list is a brace, so the innermost bracket is `{` and line breaks are significant inside it. The breaks after `{` and after each comma are removed by rule 3. The break before `}` stays, and the import grammar allows it ([grammar.md, 3.9](grammar.md#39-imports)). A trailing comma after `Response` would remove it instead; both are fine.
+
+**A struct with fields on separate lines and on one line.**
+
+```quell
+struct Movie {·
+    title: String⏎
+    year: Int, rating: Float⏎
+}⏎
+```
+
+Each `NEWLINE` separates two members, and so does the comma. The `NEWLINE` before `}` is an allowed trailing separator.
 
 **A line ending with an operator.**
 
