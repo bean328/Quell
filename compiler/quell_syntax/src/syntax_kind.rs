@@ -39,7 +39,7 @@ syntax_kinds! {
     // ------------------------------------------------------------------
     /// Spaces and tabs (and, after an error, other space characters).
     WHITESPACE,
-    /// A line break (LF or CR LF) that the newline rules removed.
+    /// A line break (LF or CR LF, or after an error a lone CR) that the newline rules removed.
     LINE_BREAK,
     /// `// ...` up to the end of the line, line break not included.
     LINE_COMMENT,
@@ -52,6 +52,7 @@ syntax_kinds! {
     /// `;`. Always an error; it counts as a line break for the newline rules.
     SEMICOLON,
     /// Text the lexer reported and skipped (an unknown character, a stray `*/` or `#`, ...).
+    /// It is trivia, so the parser reads the code around it as if it were not there.
     ERROR,
 
     // ------------------------------------------------------------------
@@ -299,11 +300,204 @@ syntax_kinds! {
     WHILE_KW,
 
     // ------------------------------------------------------------------
-    // Node kinds
-    //
-    // The parser adds the kinds of syntax tree nodes (FILE, FN_DECL, BINARY_EXPR,
-    // ERROR nodes and so on) here, after every token kind.
+    // Node kinds (spec/grammar.md). They come after every token kind, so that
+    // `is_keyword`, `is_string_piece` and the other range checks above stay correct.
+    // Keep them together and in this order: `is_node` checks the range from FILE to OR_PAT.
+    // Code the parser could not read is wrapped in a node of kind ERROR (the same kind as the
+    // trivia token for skipped text; rowan allows a node and a token to share a kind).
     // ------------------------------------------------------------------
+    /// A whole file (grammar.md, 2.1): items and statements, then `EOF`.
+    FILE,
+
+    // Items (grammar.md, 3)
+    /// `@name` or `@name(args)` before an item or member (3.1).
+    ATTRIBUTE,
+    /// A function or method (3.3).
+    FN_DECL,
+    /// The `( )` of a function's parameters.
+    PARAM_LIST,
+    /// One parameter: a name, an optional type and an optional default value.
+    PARAM,
+    /// `-> Type` after the parameters.
+    RET_TYPE,
+    /// `throws` with an optional error type.
+    THROWS_CLAUSE,
+    /// The `< >` of a declaration's generic parameters (3.4).
+    GENERIC_PARAM_LIST,
+    /// One generic parameter with its requirements: `T: Compare and Show`.
+    GENERIC_PARAM,
+    /// `struct Name { ... }` (3.5).
+    STRUCT_DECL,
+    /// `enum Name { ... }` (3.6).
+    ENUM_DECL,
+    /// `trait Name { ... }` (3.7).
+    TRAIT_DECL,
+    /// `extend Type { ... }` (3.8).
+    EXTEND_DECL,
+    /// `: Trait and Other` after a struct, enum or extend header.
+    CONFORMANCE,
+    /// The `{ }` body of a struct, enum, trait or extend, with its members.
+    MEMBER_LIST,
+    /// A struct field: `name: Type = default`.
+    FIELD,
+    /// An enum option: `Sunny` or `Rainy(mm: Float)`.
+    ENUM_OPTION,
+    /// The `( )` of an enum option's fields.
+    OPTION_FIELD_LIST,
+    /// One field of an enum option: `mm: Float`.
+    OPTION_FIELD,
+    /// `import std.math.{pi}` or `import c "header.h"` (3.9).
+    IMPORT_DECL,
+    /// The dotted module path of an import: `std.math`.
+    MODULE_PATH,
+    /// The `{ }` list of names of an import.
+    IMPORT_LIST,
+    /// `test "name" { ... }` (3.10).
+    TEST_DECL,
+    /// `comptime { ... }` (3.11).
+    COMPTIME_BLOCK,
+    /// A `let` or `var` at the top level of a file (3.12).
+    GLOBAL_LET,
+
+    // Blocks and statements (grammar.md, 4)
+    /// `{ statements }`, as a body or as a value (4.1, 6.14).
+    BLOCK,
+    /// `let` or `var` inside a block (4.3).
+    LET_STMT,
+    /// `place = value` and the compound assignments (4.4).
+    ASSIGN_STMT,
+    /// `for pattern in items { ... }` (4.5).
+    FOR_STMT,
+    /// `while condition { ... }` (4.6).
+    WHILE_STMT,
+    /// `repeat count { ... }` or `repeat { ... }` (4.7).
+    REPEAT_STMT,
+    /// `defer { ... }` (4.8).
+    DEFER_STMT,
+    /// `assert condition, message` (4.9).
+    ASSERT_STMT,
+    /// An expression used as a statement (4.10).
+    EXPR_STMT,
+
+    // Expressions (grammar.md, 6)
+    /// A number, a character, `true`, `false` or `none`.
+    LITERAL,
+    /// A string literal: `STRING_START` ... `STRING_END`, with its holes (6.13).
+    STRING_LITERAL,
+    /// One hole in a string: `{`, an expression, an optional format spec, `}`.
+    HOLE,
+    /// A name, with optional generic arguments: `score`, `List<Int>`.
+    NAME_EXPR,
+    /// `self`.
+    SELF_EXPR,
+    /// An expression in parentheses: `(a + b)`.
+    PAREN_EXPR,
+    /// A tuple: `(low, high)`.
+    TUPLE_EXPR,
+    /// A list: `[1, 2, 3]` or `[]`.
+    LIST_EXPR,
+    /// A map: `["Ava": 12]` or `[:]`.
+    MAP_EXPR,
+    /// One `key: value` entry of a map.
+    MAP_ENTRY,
+    /// `if condition { ... } else { ... }` (6.15).
+    IF_EXPR,
+    /// `match value { arms }` (6.16).
+    MATCH_EXPR,
+    /// The `{ }` of a `match`, with its arms.
+    MATCH_ARM_LIST,
+    /// One arm: `pattern if guard => value`.
+    MATCH_ARM,
+    /// The `if guard` of an arm.
+    MATCH_GUARD,
+    /// `parallel for pattern in items { ... }` (6.17).
+    PARALLEL_FOR_EXPR,
+    /// `group { ... }`.
+    GROUP_EXPR,
+    /// `unsafe { ... }`.
+    UNSAFE_EXPR,
+    /// `spawn { ... }` or `spawn call()` (6.9).
+    SPAWN_EXPR,
+    /// `-x`, `~x` or `not x`.
+    PREFIX_EXPR,
+    /// `try x`.
+    TRY_EXPR,
+    /// Two operands and an operator: arithmetic, bitwise, comparison, `and`, `or` and `??`.
+    BINARY_EXPR,
+    /// `a..<b` or `a..=b` (6.7).
+    RANGE_EXPR,
+    /// `value is Type` (6.4).
+    IS_EXPR,
+    /// `value catch fallback` or `value catch name { ... }` (6.5).
+    CATCH_EXPR,
+    /// A call: `f(args)`.
+    CALL_EXPR,
+    /// The `( )` of a call, or of an attribute.
+    ARG_LIST,
+    /// One argument: an optional `name:`, then a value, a `mut` place or a lambda.
+    ARG,
+    /// `.name` or `?.name` after a value, with optional generic arguments.
+    MEMBER_EXPR,
+    /// `value[index]`.
+    INDEX_EXPR,
+    /// The `< >` of generic arguments, in an expression or a type (6.11).
+    GENERIC_ARG_LIST,
+    /// `params => body` (6.18).
+    LAMBDA_EXPR,
+    /// The `( )` of a lambda's parameters.
+    LAMBDA_PARAM_LIST,
+    /// One lambda parameter: optional `mut`, a name and an optional type.
+    LAMBDA_PARAM,
+    /// `return` with an optional value (6.19).
+    RETURN_EXPR,
+    /// `throw value`.
+    THROW_EXPR,
+    /// `break`.
+    BREAK_EXPR,
+    /// `continue`.
+    CONTINUE_EXPR,
+
+    // Types (grammar.md, 7)
+    /// A type name or path, with optional generic arguments: `Int`, `http.Request`, `List<T>`.
+    PATH_TYPE,
+    /// `any Trait`.
+    ANY_TYPE,
+    /// `type`, the type of types.
+    TYPE_TYPE,
+    /// `Type?`.
+    OPTIONAL_TYPE,
+    /// A type in parentheses: `(Int)`.
+    PAREN_TYPE,
+    /// `(Int, String)`.
+    TUPLE_TYPE,
+    /// `(Int) -> Int`.
+    FN_TYPE,
+    /// `mut Type`, only in a parameter's type (7.2).
+    MUT_TYPE,
+
+    // Patterns (grammar.md, 8)
+    /// `_`.
+    WILDCARD_PAT,
+    /// A new name: `mm`, `title`.
+    BIND_PAT,
+    /// A literal: `6`, `-1`, `"add"`, `'a'`, `true`, `none`.
+    LITERAL_PAT,
+    /// `1..=5`, `'a'..='z'`.
+    RANGE_PAT,
+    /// An enum option, bare or qualified, with an optional payload: `Rainy(mm)`.
+    OPTION_PAT,
+    /// The `( )` of an option pattern.
+    PAYLOAD_LIST,
+    /// A named payload field: `width: w`.
+    PAYLOAD_FIELD,
+    /// A pattern in parentheses: `(A or B)`.
+    PAREN_PAT,
+    /// `(i, task)`.
+    TUPLE_PAT,
+    /// `["add", title]`.
+    LIST_PAT,
+    /// `6 or 7`.
+    OR_PAT,
 }
 
 use SyntaxKind::*;
@@ -369,7 +563,50 @@ impl SyntaxKind {
 
     /// The reserved keyword spelled `text`, if it is one. Contextual keywords are not included.
     pub fn from_keyword(text: &str) -> Option<SyntaxKind> {
-        KEYWORDS.iter().find(|(spelling, _)| *spelling == text).map(|&(_, kind)| kind)
+        let kind = match text {
+            "and" => AND_KW,
+            "assert" => ASSERT_KW,
+            "break" => BREAK_KW,
+            "catch" => CATCH_KW,
+            "comptime" => COMPTIME_KW,
+            "continue" => CONTINUE_KW,
+            "defer" => DEFER_KW,
+            "div" => DIV_KW,
+            "else" => ELSE_KW,
+            "enum" => ENUM_KW,
+            "extend" => EXTEND_KW,
+            "false" => FALSE_KW,
+            "fn" => FN_KW,
+            "for" => FOR_KW,
+            "group" => GROUP_KW,
+            "if" => IF_KW,
+            "import" => IMPORT_KW,
+            "in" => IN_KW,
+            "is" => IS_KW,
+            "let" => LET_KW,
+            "match" => MATCH_KW,
+            "mut" => MUT_KW,
+            "none" => NONE_KW,
+            "not" => NOT_KW,
+            "or" => OR_KW,
+            "pub" => PUB_KW,
+            "repeat" => REPEAT_KW,
+            "return" => RETURN_KW,
+            "self" => SELF_KW,
+            "spawn" => SPAWN_KW,
+            "static" => STATIC_KW,
+            "struct" => STRUCT_KW,
+            "throw" => THROW_KW,
+            "throws" => THROWS_KW,
+            "trait" => TRAIT_KW,
+            "true" => TRUE_KW,
+            "try" => TRY_KW,
+            "unsafe" => UNSAFE_KW,
+            "var" => VAR_KW,
+            "while" => WHILE_KW,
+            _ => return None,
+        };
+        Some(kind)
     }
 
     /// Whether the grammar never sees this kind: whitespace, removed line breaks, comments, a
@@ -391,6 +628,12 @@ impl SyntaxKind {
     /// Whether this is one of the 40 reserved keywords.
     pub fn is_keyword(self) -> bool {
         (AND_KW..=WHILE_KW).contains(&self)
+    }
+
+    /// Whether this is the kind of a syntax tree node (`FILE` to `OR_PAT`). `ERROR` is both a
+    /// token kind and a node kind, and returns `false` here.
+    pub fn is_node(self) -> bool {
+        (FILE..=OR_PAT).contains(&self)
     }
 
     /// Whether this is an identifier (`UPPER_IDENT` or `LOWER_IDENT`).
@@ -570,6 +813,30 @@ impl From<SyntaxKind> for rowan::SyntaxKind {
     }
 }
 
+/// The Quell language for rowan: it ties rowan's raw kinds to [`SyntaxKind`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum QuellLanguage {}
+
+impl rowan::Language for QuellLanguage {
+    type Kind = SyntaxKind;
+
+    fn kind_from_raw(raw: rowan::SyntaxKind) -> SyntaxKind {
+        // Every tree is built by this crate from `SyntaxKind`s, so every raw kind is known.
+        SyntaxKind::from_raw(raw.0).unwrap_or(ERROR)
+    }
+
+    fn kind_to_raw(kind: SyntaxKind) -> rowan::SyntaxKind {
+        kind.into()
+    }
+}
+
+/// A node of a Quell syntax tree.
+pub type SyntaxNode = rowan::SyntaxNode<QuellLanguage>;
+/// A token of a Quell syntax tree.
+pub type SyntaxToken = rowan::SyntaxToken<QuellLanguage>;
+/// A node or a token of a Quell syntax tree.
+pub type SyntaxElement = rowan::SyntaxElement<QuellLanguage>;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -581,6 +848,21 @@ mod tests {
             assert_eq!(SyntaxKind::from_raw(kind as u16), Some(kind));
         }
         assert_eq!(SyntaxKind::from_raw(u16::MAX), None);
+    }
+
+    #[test]
+    fn node_kinds_come_after_token_kinds() {
+        assert!(FILE.is_node() && OR_PAT.is_node() && BINARY_EXPR.is_node());
+        assert!(!ERROR.is_node() && !WHILE_KW.is_node() && !EOF.is_node());
+        for &kind in SyntaxKind::ALL {
+            if kind.is_node() {
+                assert!(!kind.is_keyword() && !kind.is_trivia() && !kind.is_string_piece());
+                assert_eq!(kind.fixed_text(), None);
+            }
+        }
+        use rowan::Language;
+        assert_eq!(QuellLanguage::kind_from_raw(QuellLanguage::kind_to_raw(MATCH_ARM)), MATCH_ARM);
+        assert_eq!(QuellLanguage::kind_from_raw(rowan::SyntaxKind(u16::MAX)), ERROR);
     }
 
     #[test]

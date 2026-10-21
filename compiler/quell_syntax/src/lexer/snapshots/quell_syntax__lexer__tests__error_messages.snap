@@ -1,0 +1,1336 @@
+---
+source: compiler/quell_syntax/src/lexer/tests.rs
+expression: visible
+---
+=== a \u{feff}b
+error[Q0002]: a byte order mark can only come at the very start of a file
+ --> example.ql:1:3
+  |
+1 | a ␢b
+  |   ^ an invisible byte order mark (U+FEFF)
+  |
+help: remove it
+  |
+1 | a b
+  |
+
+=== // \u{feff}
+error[Q0002]: a byte order mark can only come at the very start of a file
+ --> example.ql:1:4
+  |
+1 | // ␢
+  |    ^ an invisible byte order mark (U+FEFF)
+  |
+help: remove it
+  |
+1 | // 
+  |
+
+=== \"\u{feff}\"
+error[Q0002]: a byte order mark can only come at the very start of a file
+ --> example.ql:1:2
+  |
+1 | "␢"
+  |  ^ an invisible byte order mark (U+FEFF)
+  |
+help: to put this character in a string, write `\u{FEFF}`
+  |
+1 | "\u{FEFF}"
+  |
+
+=== a\0b
+error[Q0003]: this file contains a NUL character (U+0000)
+ --> example.ql:1:2
+  |
+1 | a␀b
+  |  ^ NUL character
+  |
+  = note: a NUL character is not allowed anywhere, not even in a comment or string
+help: remove it
+  |
+1 | ab
+  |
+
+=== // a\0b
+error[Q0003]: this file contains a NUL character (U+0000)
+ --> example.ql:1:5
+  |
+1 | // a␀b
+  |     ^ NUL character
+  |
+  = note: a NUL character is not allowed anywhere, not even in a comment or string
+help: remove it
+  |
+1 | // ab
+  |
+
+=== /* \0 */
+error[Q0003]: this file contains a NUL character (U+0000)
+ --> example.ql:1:4
+  |
+1 | /* ␀ */
+  |    ^ NUL character
+  |
+  = note: a NUL character is not allowed anywhere, not even in a comment or string
+help: remove it
+  |
+1 | /*  */
+  |
+
+=== \"\0\"
+error[Q0003]: this file contains a NUL character (U+0000)
+ --> example.ql:1:2
+  |
+1 | "␀"
+  |  ^ NUL character
+  |
+  = note: a NUL character is not allowed anywhere, not even in a comment or string
+help: remove it
+  |
+1 | ""
+  |
+
+=== a\u{1}b
+error[Q0004]: this file contains an invisible control character (U+0001)
+ --> example.ql:1:2
+  |
+1 | a␁b
+  |  ^ this character
+  |
+help: remove it
+  |
+1 | ab
+  |
+
+=== a\u{7f}b
+error[Q0004]: this file contains an invisible control character (U+007F)
+ --> example.ql:1:2
+  |
+1 | a␡b
+  |  ^ this character
+  |
+help: remove it
+  |
+1 | ab
+  |
+
+=== \"a\u{1b}b\"
+error[Q0035]: an invisible control character (U+001B) can't be written directly in a literal
+ --> example.ql:1:3
+  |
+1 | "a␛b"
+  |   ^ this character
+  |
+help: write it as the escape `\u{1B}`
+  |
+1 | "a\u{1B}b"
+  |
+
+=== #\"a\u{1b}b\"#
+error[Q0035]: an invisible control character (U+001B) can't be written directly in a literal
+ --> example.ql:1:4
+  |
+1 | #"a␛b"#
+  |    ^ this character
+  |
+  = help: raw strings have no escapes; use a normal string with `\u{1B}`
+help: or remove it
+  |
+1 | #"ab"#
+  |
+
+=== \'\u{7}\'
+error[Q0035]: an invisible control character (U+0007) can't be written directly in a literal
+ --> example.ql:1:2
+  |
+1 | '␇'
+  |  ^ this character
+  |
+help: write it as the escape `\u{7}`
+  |
+1 | '\u{7}'
+  |
+
+=== a\rb
+error[Q0005]: a carriage return must be followed by a line feed
+ --> example.ql:1:2
+  |
+1 | a␍b
+  |  ^ a carriage return (U+000D) on its own
+  |
+  = note: Quell files end lines with a line feed (LF) or CR LF
+help: use a normal line break
+  |
+1 | a
+2 | b
+  |
+
+=== // a\rb
+error[Q0005]: a carriage return must be followed by a line feed
+ --> example.ql:1:5
+  |
+1 | // a␍b
+  |     ^ a carriage return (U+000D) on its own
+  |
+  = note: Quell files end lines with a line feed (LF) or CR LF
+help: use a normal line break
+  |
+1 | // a
+2 | b
+  |
+
+=== /* a\rb */
+error[Q0005]: a carriage return must be followed by a line feed
+ --> example.ql:1:5
+  |
+1 | /* a␍b */
+  |     ^ a carriage return (U+000D) on its own
+  |
+  = note: Quell files end lines with a line feed (LF) or CR LF
+help: use a normal line break
+  |
+1 | /* a
+2 | b */
+  |
+
+=== \"a\rb\"
+error[Q0005]: a carriage return must be followed by a line feed
+ --> example.ql:1:3
+  |
+1 | "a␍b"
+  |   ^ a carriage return (U+000D) on its own
+  |
+  = note: Quell files end lines with a line feed (LF) or CR LF
+help: write it as the escape `\r`
+  |
+1 | "a\rb"
+  |
+
+=== a\u{a0}b
+error[Q0006]: this is a non-breaking space (U+00A0), not a normal space
+ --> example.ql:1:2
+  |
+1 | a b
+  |  ^ this character
+  |
+help: use a normal space
+  |
+1 | a b
+  |
+
+=== a\u{200b}b
+error[Q0006]: this is a zero-width space (U+200B), not a normal space
+ --> example.ql:1:2
+  |
+1 | a␢b
+  |  ^ this character
+  |
+help: remove it
+  |
+1 | ab
+  |
+
+=== a\u{2028}b
+error[Q0006]: this is a line separator (U+2028), not a normal space
+ --> example.ql:1:2
+  |
+1 | a␢b
+  |  ^ this character
+  |
+help: use a normal line break
+  |
+1 | a
+2 | b
+  |
+
+=== a\u{3000}b
+error[Q0006]: this is an ideographic space (U+3000), not a normal space
+ --> example.ql:1:2
+  |
+1 | a　b
+  |  ^ this character
+  |
+help: use a normal space
+  |
+1 | a b
+  |
+
+=== /* never closed
+error[Q0007]: this block comment is never closed
+ --> example.ql:1:1
+  |
+1 | /* never closed
+  | ^^ this `/*` has no matching `*/`
+  |
+help: close the comment with `*/`
+  |
+1 | /* never closed*/
+  |
+
+=== /* a /* b */
+error[Q0007]: this block comment is never closed
+ --> example.ql:1:1
+  |
+1 | /* a /* b */
+  | ^^ this `/*` has no matching `*/`
+  |
+help: close the comment with `*/`
+  |
+1 | /* a /* b */*/
+  |
+
+=== /// ```\n/// let x = 1\nfn f() {}
+error[Q0008]: this code block in a doc comment is never closed
+ --> example.ql:1:1
+  |
+1 | /// ```
+  | ^^^^^^^ this ``` opens a code block
+  |
+  = note: every ``` that opens a code block needs a ``` line that closes it
+help: close it with a doc comment line that holds only ```
+  |
+2 | /// let x = 1
+3 | /// ```
+  |
+
+=== /// ```text\n/// a
+error[Q0008]: this code block in a doc comment is never closed
+ --> example.ql:1:1
+  |
+1 | /// ```text
+  | ^^^^^^^^^^^ this ``` opens a code block
+  |
+  = note: every ``` that opens a code block needs a ``` line that closes it
+help: close it with a doc comment line that holds only ```
+  |
+2 | /// a
+3 | /// ```
+  |
+
+=== let café = 1
+error[Q0009]: the name `café` is not in the standard Unicode form
+ --> example.ql:1:5
+  |
+1 | let café = 1
+  |     ^^^^^ this name mixes separate accents with letters
+  |
+  = note: names must be in Unicode Normalization Form C (NFC), so that two names that look the same are the same
+help: write it as `café`
+  |
+1 | let café = 1
+  |
+
+=== 0X10
+error[Q0010]: number prefixes are lowercase: write `0x`
+ --> example.ql:1:2
+  |
+1 | 0X10
+  |  ^ uppercase prefix
+  |
+help: write `0x`
+  |
+1 | 0x10
+  |
+
+=== 0B1
+error[Q0010]: number prefixes are lowercase: write `0b`
+ --> example.ql:1:2
+  |
+1 | 0B1
+  |  ^ uppercase prefix
+  |
+help: write `0b`
+  |
+1 | 0b1
+  |
+
+=== 007
+error[Q0011]: numbers can't start with `0`
+ --> example.ql:1:1
+  |
+1 | 007
+  | ^^^ leading zero
+  |
+  = note: a leading zero would mean an octal number in some languages, so Quell doesn't allow it
+help: for the number 7, remove the leading zeros
+  |
+1 | 7
+  |
+help: for an octal number, write `0o7`
+  |
+1 | 0o7
+  |
+
+=== 00.5
+error[Q0011]: numbers can't start with `0`
+ --> example.ql:1:1
+  |
+1 | 00.5
+  | ^^ leading zero
+  |
+  = note: a leading zero would mean an octal number in some languages, so Quell doesn't allow it
+help: for the number 0, remove the leading zeros
+  |
+1 | 0.5
+  |
+
+=== 0x
+error[Q0012]: `0x` must be followed by hex digits
+ --> example.ql:1:1
+  |
+1 | 0x
+  | ^^ no hex digits here
+  |
+  = help: a hex number uses the digits 0 to 9 and the letters a to f, as in `0xff`
+
+=== 0b
+error[Q0012]: `0b` must be followed by binary digits
+ --> example.ql:1:1
+  |
+1 | 0b
+  | ^^ no binary digits here
+  |
+  = help: a binary number uses only the digits 0 and 1, as in `0b1010`
+
+=== 0o
+error[Q0012]: `0o` must be followed by octal digits
+ --> example.ql:1:1
+  |
+1 | 0o
+  | ^^ no octal digits here
+  |
+  = help: an octal number uses only the digits 0 to 7, as in `0o17`
+
+=== 0b102
+error[Q0013]: `2` is not a binary digit
+ --> example.ql:1:5
+  |
+1 | 0b102
+  |     ^ a binary number uses only the digits 0 and 1
+  |
+help: for the decimal number 102, remove the `0b`
+  |
+1 | 102
+  |
+
+=== 0o8
+error[Q0013]: `8` is not an octal digit
+ --> example.ql:1:3
+  |
+1 | 0o8
+  |   ^ an octal number uses only the digits 0 to 7
+  |
+help: for the decimal number 8, remove the `0o`
+  |
+1 | 8
+  |
+
+=== 1__000
+error[Q0014]: an underscore in a number must sit between two digits
+ --> example.ql:1:3
+  |
+1 | 1__000
+  |   ^ misplaced underscore
+  |
+  = note: underscores make long numbers readable, as in `1_000_000`
+help: remove it
+  |
+1 | 1_000
+  |
+
+=== 1_
+error[Q0014]: an underscore in a number must sit between two digits
+ --> example.ql:1:2
+  |
+1 | 1_
+  |  ^ misplaced underscore
+  |
+  = note: underscores make long numbers readable, as in `1_000_000`
+help: remove it
+  |
+1 | 1
+  |
+
+=== 0x_ff
+error[Q0014]: an underscore in a number must sit between two digits
+ --> example.ql:1:3
+  |
+1 | 0x_ff
+  |   ^ misplaced underscore
+  |
+  = note: underscores make long numbers readable, as in `1_000_000`
+help: remove it
+  |
+1 | 0xff
+  |
+
+=== 1.5_
+error[Q0014]: an underscore in a number must sit between two digits
+ --> example.ql:1:4
+  |
+1 | 1.5_
+  |    ^ misplaced underscore
+  |
+  = note: underscores make long numbers readable, as in `1_000_000`
+help: remove it
+  |
+1 | 1.5
+  |
+
+=== 3px
+error[Q0015]: a number can't be directly followed by a letter
+ --> example.ql:1:2
+  |
+1 | 3px
+  |  ^^ `px` is not part of the number
+  |
+  = note: Quell has no number suffixes; the type comes from the context or a conversion such as `UInt8(255)`
+help: remove `px`
+  |
+1 | 3
+  |
+
+=== 10ms
+error[Q0015]: a number can't be directly followed by a letter
+ --> example.ql:1:3
+  |
+1 | 10ms
+  |   ^^ `ms` is not part of the number
+  |
+  = note: Quell has no number suffixes; the type comes from the context or a conversion such as `UInt8(255)`
+help: remove `ms`
+  |
+1 | 10
+  |
+
+=== 0x1g
+error[Q0015]: a number can't be directly followed by a letter
+ --> example.ql:1:4
+  |
+1 | 0x1g
+  |    ^ `g` is not part of the number
+  |
+  = note: Quell has no number suffixes; the type comes from the context or a conversion such as `UInt8(255)`
+help: remove `g`
+  |
+1 | 0x1
+  |
+
+=== 2fast
+error[Q0015]: a number can't be directly followed by a letter
+ --> example.ql:1:2
+  |
+1 | 2fast
+  |  ^^^^ `fast` is not part of the number
+  |
+  = note: Quell has no number suffixes; the type comes from the context or a conversion such as `UInt8(255)`
+help: remove `fast`
+  |
+1 | 2
+  |
+
+=== 1.5e
+error[Q0015]: a number can't be directly followed by a letter
+ --> example.ql:1:4
+  |
+1 | 1.5e
+  |    ^ `e` is not part of the number
+  |
+  = note: Quell has no number suffixes; the type comes from the context or a conversion such as `UInt8(255)`
+help: remove `e`
+  |
+1 | 1.5
+  |
+
+=== \'\'
+error[Q0020]: a character literal needs exactly one character
+ --> example.ql:1:1
+  |
+1 | ''
+  | ^^ nothing between the quotes
+  |
+  = help: put one character between the quotes, such as `'a'` or `' '`
+help: for empty text, use a string
+  |
+1 | ""
+  |
+
+=== \'ab\'
+error[Q0021]: single quotes hold exactly one character
+ --> example.ql:1:1
+  |
+1 | 'ab'
+  | ^^^^ this has more than one character
+  |
+help: for text, use double quotes
+  |
+1 | "ab"
+  |
+
+=== \'é\'
+error[Q0021]: single quotes hold exactly one character
+ --> example.ql:1:1
+  |
+1 | 'é'
+  | ^^^^ this has more than one character
+  |
+  = note: this is a letter followed by separate accents, which together look like one character
+help: write it as the single character `é`
+  |
+1 | 'é'
+  |
+
+=== \'a
+error[Q0022]: this character literal is never closed
+ --> example.ql:1:1
+  |
+1 | 'a
+  | ^^ this character has no closing `'`
+  |
+help: add the closing `'`
+  |
+1 | 'a'
+  |
+
+=== \'
+error[Q0022]: this character literal is never closed
+ --> example.ql:1:1
+  |
+1 | '
+  | ^ the line ends before the closing `'`
+  |
+  = help: a character literal is one character between single quotes, such as `'a'`
+
+=== \'\n\'
+error[Q0022]: this character literal is never closed
+ --> example.ql:1:1
+  |
+1 | '
+  | ^ the line ends before the closing `'`
+  |
+  = help: a character literal is one character between single quotes, such as `'a'`
+
+error[Q0022]: this character literal is never closed
+ --> example.ql:2:1
+  |
+2 | '
+  | ^ the line ends before the closing `'`
+  |
+  = help: a character literal is one character between single quotes, such as `'a'`
+
+=== \"\\q\"
+error[Q0030]: `\q` is not an escape
+ --> example.ql:1:2
+  |
+1 | "\q"
+  |  ^^ unknown escape
+  |
+  = note: the escapes are `\n`, `\r`, `\t`, `\0`, `\\`, `\"`, `\'` and `\u{...}`
+help: for a backslash, write it twice
+  |
+1 | "\\q"
+  |
+
+=== \"\\
+error[Q0034]: this string is never closed
+ --> example.ql:1:1
+  |
+1 | "\
+  | ^ the file ends before the closing `"`
+  |
+  = note: a string can't hold a line break; write `\n` for one, or use a multi-line string that starts with `"""`
+help: write the `\` twice and add `"` where the text ends
+  |
+1 | "\\"
+  |
+
+error[Q0030]: this `\` starts an escape, but the file ends here
+ --> example.ql:1:2
+  |
+1 | "\
+  |  ^ incomplete escape
+  |
+help: for a backslash, write `\\`
+  |
+1 | "\\
+  |
+
+=== \"\\{\"
+error[Q0031]: there is no `\{` escape
+ --> example.ql:1:2
+  |
+1 | "\{"
+  |  ^^ not an escape
+  |
+help: in a string, a literal brace is written twice: `{{`
+  |
+1 | "{{"
+  |
+
+=== \'\\{\'
+error[Q0031]: there is no `\{` escape
+ --> example.ql:1:2
+  |
+1 | '\{'
+  |  ^^ not an escape
+  |
+help: a brace needs no escape in a character literal: `'{'`
+  |
+1 | '{'
+  |
+
+=== \"\\u{}\"
+error[Q0032]: `\u{...}` needs a hex number of 1 to 6 digits
+ --> example.ql:1:2
+  |
+1 | "\u{}"
+  |  ^^^^ invalid escape
+  |
+  = help: write the code of the character in hex, such as `\u{E9}` or `\u{1F600}`
+
+=== \"\\uE9\"
+error[Q0032]: `\u` must be followed by a hex code in braces
+ --> example.ql:1:2
+  |
+1 | "\uE9"
+  |  ^^ incomplete escape
+  |
+  = help: write the code of the character in hex, such as `\u{E9}` for `é`
+
+=== \"\\u{E9\"
+error[Q0032]: this `\u{` escape is missing its closing `}`
+ --> example.ql:1:2
+  |
+1 | "\u{E9"
+  |  ^^^^^ invalid escape
+  |
+help: add the `}`
+  |
+1 | "\u{E9}"
+  |
+
+=== \"\\u{1234567}\"
+error[Q0032]: `\u{...}` takes at most 6 hex digits
+ --> example.ql:1:2
+  |
+1 | "\u{1234567}"
+  |  ^^^^^^^^^^^ invalid escape
+  |
+  = note: the largest character code is `10FFFF`
+  = help: write the code of the character in hex, such as `\u{E9}` or `\u{1F600}`
+
+=== \"\\u{xyz}\"
+error[Q0032]: `\u{...}` needs a hex number of 1 to 6 digits
+ --> example.ql:1:2
+  |
+1 | "\u{xyz}"
+  |  ^^^^^^^ invalid escape
+  |
+  = help: write the code of the character in hex, such as `\u{E9}` or `\u{1F600}`
+
+=== \"\\u{D800}\"
+error[Q0033]: `\u{D800}` is not a Unicode character
+ --> example.ql:1:2
+  |
+1 | "\u{D800}"
+  |  ^^^^^^^^ no character has this code
+  |
+  = note: the codes from `D800` to `DFFF` are surrogates, which are not characters
+  = help: check the code of the character you want
+
+=== \"\\u{110000}\"
+error[Q0033]: `\u{110000}` is not a Unicode character
+ --> example.ql:1:2
+  |
+1 | "\u{110000}"
+  |  ^^^^^^^^^^ no character has this code
+  |
+  = note: the largest character code is `10FFFF`
+  = help: check the code of the character you want
+
+=== \"never closed
+error[Q0034]: this string is never closed
+ --> example.ql:1:1
+  |
+1 | "never closed
+  | ^ the file ends before the closing `"`
+  |
+  = note: a string can't hold a line break; write `\n` for one, or use a multi-line string that starts with `"""`
+help: add `"` where the text ends
+  |
+1 | "never closed"
+  |
+
+=== \"two\nlines\"
+error[Q0034]: this string is never closed
+ --> example.ql:1:1
+  |
+1 | "two
+  | ^ the line ends before the closing `"`
+  |
+  = note: a string can't hold a line break; write `\n` for one, or use a multi-line string that starts with `"""`
+help: add `"` where the text ends
+  |
+1 | "two"
+  |
+
+error[Q0034]: this string is never closed
+ --> example.ql:2:6
+  |
+2 | lines"
+  |      ^ the file ends before the closing `"`
+  |
+  = note: a string can't hold a line break; write `\n` for one, or use a multi-line string that starts with `"""`
+help: add `"` where the text ends
+  |
+2 | lines""
+  |
+
+=== #\"raw
+error[Q0034]: this string is never closed
+ --> example.ql:1:1
+  |
+1 | #"raw
+  | ^^ the file ends before the closing `"#`
+  |
+  = note: a raw string on one line can't hold a line break; for several lines, start it with `#"""` on a line of its own
+help: add `"#` where the text ends
+  |
+1 | #"raw"#
+  |
+
+=== x = \"\"\"\n  never closed
+error[Q0034]: this multi-line string is never closed
+ --> example.ql:1:5
+  |
+1 | x = """
+  |     ^^^ the file ends before the closing delimiter
+  |
+help: end the string with `"""` on a line of its own
+  |
+2 |   never closed
+3 | """
+  |
+
+=== \"a}b\"
+error[Q0036]: a single `}` in a string doesn't close anything
+ --> example.ql:1:3
+  |
+1 | "a}b"
+  |   ^ no `{` is open here
+  |
+help: for a literal brace, write `}}`
+  |
+1 | "a}}b"
+  |
+
+=== \"{}\"
+error[Q0037]: this `{}` in a string is empty
+ --> example.ql:1:2
+  |
+1 | "{}"
+  |  ^^ a value must go between `{` and `}`
+  |
+help: for literal braces, write `{{}}`
+  |
+1 | "{{}}"
+  |
+
+=== \"{ }\"
+error[Q0037]: this `{}` in a string is empty
+ --> example.ql:1:2
+  |
+1 | "{ }"
+  |  ^^^ a value must go between `{` and `}`
+  |
+help: for literal braces, write `{{ }}`
+  |
+1 | "{{ }}"
+  |
+
+=== \"{:.2}\"
+error[Q0038]: this `{` has a format spec but no value
+ --> example.ql:1:2
+  |
+1 | "{:.2}"
+  |  ^^^^^ no value before the `:`
+  |
+  = help: put the value before the `:`, as in `{price:.2}`
+help: for literal braces, double them
+  |
+1 | "{{:.2}}"
+  |
+
+=== print(\"Use { to start a block\")
+error[Q0039]: this `{` starts a value inside the string, but it is never closed
+ --> example.ql:1:12
+  |
+1 | print("Use { to start a block")
+  |            ^ the line ends before the matching `}`
+  |
+help: for a literal brace, write `{{`
+  |
+1 | print("Use {{ to start a block")
+  |
+  = help: for JSON, use a raw string such as `#"{"a": 1}"#`
+
+=== \"{x:.2\"
+error[Q0039]: this `{` starts a value inside the string, but it is never closed
+ --> example.ql:1:2
+  |
+1 | "{x:.2"
+  |  ^ the line ends before the matching `}`
+  |
+help: for a literal brace, write `{{`
+  |
+1 | "{{x:.2"
+  |
+  = help: for JSON, use a raw string such as `#"{"a": 1}"#`
+
+=== \"{x // note}\"
+error[Q0040]: comments can't go inside `{ }` in a string
+ --> example.ql:1:5
+  |
+1 | "{x // note}"
+  |     ^^^^^^^ comment inside a string's `{ }`
+  |
+help: remove the comment, or move it after the string
+  |
+1 | "{x }"
+  |
+
+=== \"{x /* note */}\"
+error[Q0040]: comments can't go inside `{ }` in a string
+ --> example.ql:1:5
+  |
+1 | "{x /* note */}"
+  |     ^^^^^^^^^^ comment inside a string's `{ }`
+  |
+help: remove the comment, or move it after the string
+  |
+1 | "{x }"
+  |
+
+=== \"{x:}\"
+error[Q0041]: this format spec is empty
+ --> example.ql:1:4
+  |
+1 | "{x:}"
+  |    ^ invalid format spec
+  |
+  = note: a format spec is written `[width][.precision][kind]`, as in `.2` (two decimals), `5` (at least 5 characters) or `02x` (hex, padded with zeros to 2 characters)
+help: remove the `:`
+  |
+1 | "{x}"
+  |
+
+=== \"{x: .2}\"
+error[Q0041]: ` .2` is not a valid format spec
+ --> example.ql:1:4
+  |
+1 | "{x: .2}"
+  |    ^^^^ invalid format spec
+  |
+  = note: a format spec is written `[width][.precision][kind]`, as in `.2` (two decimals), `5` (at least 5 characters) or `02x` (hex, padded with zeros to 2 characters)
+help: remove the spaces
+  |
+1 | "{x:.2}"
+  |
+
+=== \"{x:.2f}\"
+error[Q0041]: `.2f` is not a valid format spec
+ --> example.ql:1:4
+  |
+1 | "{x:.2f}"
+  |    ^^^^ invalid format spec
+  |
+  = note: a format spec is written `[width][.precision][kind]`, as in `.2` (two decimals), `5` (at least 5 characters) or `02x` (hex, padded with zeros to 2 characters)
+help: remove the format spec
+  |
+1 | "{x}"
+  |
+
+=== \"{\"a\": 1}\"
+error[Q0041]: ` 1` is not a valid format spec
+ --> example.ql:1:6
+  |
+1 | "{"a": 1}"
+  |      ^^^ invalid format spec
+  |
+  = note: a format spec is written `[width][.precision][kind]`, as in `.2` (two decimals), `5` (at least 5 characters) or `02x` (hex, padded with zeros to 2 characters)
+  = help: to write JSON or other text with braces, use a raw string, such as `#"{"a": 1}"#`
+
+=== \"\"\"text\"\"\"
+error[Q0042]: a string that starts with `"""` must start its text on the next line
+ --> example.ql:1:1
+  |
+1 | """text"""
+  | ^^^ text follows on the same line
+  |
+help: for text on one line, use a normal string
+  |
+1 | "text"
+  |
+
+=== x = \"\"\"text\n  more\n  \"\"\"
+error[Q0042]: a string that starts with `"""` must start its text on the next line
+ --> example.ql:1:5
+  |
+1 | x = """text
+  |     ^^^ text follows on the same line
+  |
+help: move the text to the next line
+  |
+1 | x = """
+2 |   text
+  |
+
+=== x = \"\"\"\n  text\"\"\"
+error[Q0043]: the closing `"""` must be on its own line
+ --> example.ql:2:7
+  |
+2 |   text"""
+  |       ^^^ this closes the string
+  |
+  = note: the indentation before the closing delimiter is removed from every line
+help: put it on a new line
+  |
+2 |   text
+3 |   """
+  |
+
+=== x = \"\"\"\n  a\n b\n  \"\"\"
+error[Q0044]: this line is less indented than the closing `"""`
+ --> example.ql:3:1
+  |
+3 |  b
+  | ^ not indented enough
+4 |   """
+  |   --- this sets the indentation that every line loses
+  |
+help: indent the line at least as far as the closing delimiter
+  |
+3 |   b
+  |
+
+=== x = \"\"\"\n  a\n\tb\n  \"\"\"
+error[Q0044]: this line is less indented than the closing `"""`
+ --> example.ql:3:1
+  |
+3 |     b
+  | ^^^^ not indented enough
+4 |   """
+  |   --- this sets the indentation that every line loses
+  |
+help: indent the line at least as far as the closing delimiter
+  |
+3 |   b
+  |
+
+=== a && b
+error[Q0050]: Quell uses the word `and` instead of `&&`
+ --> example.ql:1:3
+  |
+1 | a && b
+  |   ^^ write `and` here
+  |
+help: write `and`, as in `a and b`
+  |
+1 | a and b
+  |
+
+=== a || b
+error[Q0051]: Quell uses the word `or` instead of `||`
+ --> example.ql:1:3
+  |
+1 | a || b
+  |   ^^ write `or` here
+  |
+help: write `or`, as in `a or b`
+  |
+1 | a or b
+  |
+
+=== !done
+error[Q0052]: Quell uses the word `not` instead of `!`
+ --> example.ql:1:1
+  |
+1 | !done
+  | ^ write `not` here
+  |
+help: write `not`, as in `not done`
+  |
+1 | not done
+  |
+
+=== 0..10
+error[Q0053]: a range must say whether it includes the end
+ --> example.ql:1:2
+  |
+1 | 0..10
+  |  ^^ write `..<` or `..=` here
+  |
+help: to stop before the end, write `..<` (`0..<10` stops before 10)
+  |
+1 | 0..<10
+  |
+help: to include the end, write `..=` (`1..=10` includes 10)
+  |
+1 | 0..=10
+  |
+
+=== 0...10
+error[Q0053]: a range must say whether it includes the end
+ --> example.ql:1:2
+  |
+1 | 0...10
+  |  ^^^ write `..<` or `..=` here
+  |
+help: to stop before the end, write `..<` (`0..<10` stops before 10)
+  |
+1 | 0..<10
+  |
+help: to include the end, write `..=` (`1..=10` includes 10)
+  |
+1 | 0..=10
+  |
+
+=== x = 1;
+error[Q0054]: Quell doesn't use semicolons
+ --> example.ql:1:6
+  |
+1 | x = 1;
+  |      ^ remove this `;`
+  |
+help: a line break ends a statement, so remove the `;`
+  |
+1 | x = 1
+  |
+
+=== a; b
+error[Q0054]: Quell doesn't use semicolons
+ --> example.ql:1:2
+  |
+1 | a; b
+  |  ^ remove this `;`
+  |
+help: put each statement on its own line
+  |
+1 | a
+2 | b
+  |
+
+=== a */ b
+error[Q0055]: `*/` without a matching `/*`
+ --> example.ql:1:3
+  |
+1 | a */ b
+  |   ^^ no comment is open here
+  |
+help: remove it
+  |
+1 | a  b
+  |
+
+=== # comment
+error[Q0056]: `#` is only used for raw strings
+ --> example.ql:1:1
+  |
+1 | # comment
+  | ^ this `#` doesn't start a raw string
+  |
+  = note: a raw string looks like `#"{"a": 1}"#`
+help: remove it
+  |
+1 |  comment
+  |
+help: to write a comment, use `//`
+  |
+1 | // comment
+  |
+
+=== ##x
+error[Q0056]: `#` is only used for raw strings
+ --> example.ql:1:1
+  |
+1 | ##x
+  | ^^ this `#` doesn't start a raw string
+  |
+  = note: a raw string looks like `#"{"a": 1}"#`
+help: remove it
+  |
+1 | x
+  |
+
+=== $x
+error[Q0057]: Quell doesn't use the character `$`
+ --> example.ql:1:1
+  |
+1 | $x
+  | ^ this character can't start any part of Quell code
+  |
+  = note: to put a value into a string, write `{name}` inside the string
+help: remove it
+  |
+1 | x
+  |
+
+=== `x`
+error[Q0057]: Quell doesn't use the backtick character (U+0060)
+ --> example.ql:1:1
+  |
+1 | `x`
+  | ^ this character can't start any part of Quell code
+  |
+  = note: strings use double quotes: `"text"`
+help: remove it
+  |
+1 | x`
+  |
+
+error[Q0057]: Quell doesn't use the backtick character (U+0060)
+ --> example.ql:1:3
+  |
+1 | `x`
+  |   ^ this character can't start any part of Quell code
+  |
+  = note: strings use double quotes: `"text"`
+help: remove it
+  |
+1 | `x
+  |
+
+=== a \\ b
+error[Q0057]: Quell doesn't use the character `\`
+ --> example.ql:1:3
+  |
+1 | a \ b
+  |   ^ this character can't start any part of Quell code
+  |
+  = note: a backslash is only used for escapes inside strings, like `\n`
+help: remove it
+  |
+1 | a  b
+  |
+
+=== price = €5
+error[Q0057]: Quell doesn't use the character `€` (U+20AC)
+ --> example.ql:1:9
+  |
+1 | price = €5
+  |         ^ this character can't start any part of Quell code
+  |
+help: remove it
+  |
+1 | price = 5
+  |
+
+=== “hi”
+error[Q0058]: this is a curly double quote (U+201C), which Quell doesn't use
+ --> example.ql:1:1
+  |
+1 | “hi”
+  | ^ this looks like `"` but is a different character
+  |
+help: write `"`
+  |
+1 | "hi”
+  |
+
+error[Q0058]: this is a curly double quote (U+201D), which Quell doesn't use
+ --> example.ql:1:4
+  |
+1 | “hi”
+  |    ^ this looks like `"` but is a different character
+  |
+help: write `"`
+  |
+1 | “hi"
+  |
+
+=== a − b
+error[Q0058]: this is a minus sign (U+2212), which Quell doesn't use
+ --> example.ql:1:3
+  |
+1 | a − b
+  |   ^ this looks like `-` but is a different character
+  |
+help: write `-`
+  |
+1 | a - b
+  |
+
+=== a)
+error[Q0060]: this `)` doesn't close anything
+ --> example.ql:1:2
+  |
+1 | a)
+  |  ^ no `(` is open here
+  |
+help: remove it
+  |
+1 | a
+  |
+
+=== ]
+error[Q0060]: this `]` doesn't close anything
+ --> example.ql:1:1
+  |
+1 | ]
+  | ^ no `[` is open here
+  |
+help: remove it
+  |
+1 |
+  |
+
+=== \"{x)}\"
+error[Q0060]: this `)` doesn't close anything
+ --> example.ql:1:4
+  |
+1 | "{x)}"
+  |    ^ no `(` is open here
+  |
+help: remove it
+  |
+1 | "{x}"
+  |
+
+=== (a
+error[Q0061]: this `(` is never closed
+ --> example.ql:1:1
+  |
+1 | (a
+  | ^ this needs a matching `)`
+  |
+help: add the missing `)`
+  |
+1 | (a
+2 | )
+  |
+
+=== { [ }
+error[Q0061]: this `[` is never closed
+ --> example.ql:1:3
+  |
+1 | { [ }
+  |   ^ this needs a matching `]`
+  |     - `}` comes before the `]`
+  |
+help: add the missing `]`
+  |
+1 | { [ ]}
+  |
+
+=== \"{f(x}\"
+error[Q0061]: this `(` is never closed
+ --> example.ql:1:4
+  |
+1 | "{f(x}"
+  |    ^ this needs a matching `)`
+  |      - `}` comes before the `)`
+  |
+help: add the missing `)`
+  |
+1 | "{f(x)}"
+  |

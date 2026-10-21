@@ -47,7 +47,6 @@ pub(crate) const INVALID_FORMAT_SPEC: &str = "Q0041";
 pub(crate) const TEXT_AFTER_MULTILINE_OPENING: &str = "Q0042";
 pub(crate) const MULTILINE_CLOSING_NOT_ALONE: &str = "Q0043";
 pub(crate) const LESS_INDENTED_LINE: &str = "Q0044";
-pub(crate) const TOO_MANY_UNCLOSED_HOLES: &str = "Q0045";
 
 // Tokens that exist only to give a helpful error (section 11)
 pub(crate) const DOUBLE_AMPERSAND: &str = "Q0050";
@@ -63,3 +62,6 @@ pub(crate) const LOOK_ALIKE_CHARACTER: &str = "Q0058";
 // Brackets (section 12.2)
 pub(crate) const UNMATCHED_CLOSING_BRACKET: &str = "Q0060";
 pub(crate) const UNCLOSED_BRACKET: &str = "Q0061";
+
+// Limits
+pub(crate) const FILE_TOO_LARGE: &str = "Q0070";

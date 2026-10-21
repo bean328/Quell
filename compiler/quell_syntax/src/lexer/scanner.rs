@@ -7,8 +7,8 @@
 //!
 //! The one place where the scanner moves backwards is a hole that is never closed
 //! (spec/lexical.md, section 9.3): it drops the tokens it read for the hole and reads the rest
-//! of the line again as string text. A budget on the number of bytes read again keeps the total
-//! work linear even for input made to defeat this.
+//! of the line again as string text. A budget on the number of bytes read again on each line
+//! keeps the total work linear even for input made to defeat this.
 
 use quell_diagnostics::{Diagnostic, Edit, Span};
 
@@ -38,10 +38,14 @@ fn span(start: usize, end: usize) -> Span {
     Span::new(start as u32, end as u32)
 }
 
-/// How a character is shown in a message: in backticks, with its code point if it isn't plain
+/// How a character is named in a message: in backticks, with its code point if it isn't plain
 /// visible ASCII.
 fn describe_char(c: char) -> String {
-    if c.is_ascii_graphic() { format!("`{c}`") } else { format!("`{c}` (U+{:04X})", c as u32) }
+    match c {
+        '`' => "the backtick character (U+0060)".to_string(),
+        _ if c.is_ascii_graphic() => format!("the character `{c}`"),
+        _ => format!("the character `{c}` (U+{:04X})", c as u32),
+    }
 }
 
 enum Mode {
@@ -123,7 +127,9 @@ struct Scanner<'a> {
     modes: Vec<Mode>,
     /// How many `Mode::Hole` entries `modes` holds.
     open_holes: usize,
-    /// Bytes read twice because of holes that were never closed, and the most allowed.
+    /// The line (start and end offset) that the rescan budget is for, the bytes on it read
+    /// again because of holes that were never closed, and the most allowed.
+    rescan_line: (usize, usize),
     rescanned: usize,
     rescan_limit: usize,
     /// A cache for `line_start`: (an offset, the start of its line).
@@ -140,8 +146,9 @@ impl<'a> Scanner<'a> {
             diags: Vec::new(),
             modes: Vec::new(),
             open_holes: 0,
+            rescan_line: (0, 0),
             rescanned: 0,
-            rescan_limit: text.len().saturating_mul(4).saturating_add(4096),
+            rescan_limit: 0,
             line_start_cache: (0, 0),
         }
     }
@@ -315,11 +322,19 @@ impl<'a> Scanner<'a> {
                 BANG
             }
             b'<' if next == Some(b'<') => {
-                if self.is(start + 2, b'=') { self.fixed(3, LT_LT_EQ) } else { self.fixed(2, LT_LT) }
+                if self.is(start + 2, b'=') {
+                    self.fixed(3, LT_LT_EQ)
+                } else {
+                    self.fixed(2, LT_LT)
+                }
             }
             b'<' => self.with_eq(LT_EQ, LT),
             b'>' if next == Some(b'>') => {
-                if self.is(start + 2, b'=') { self.fixed(3, GT_GT_EQ) } else { self.fixed(2, GT_GT) }
+                if self.is(start + 2, b'=') {
+                    self.fixed(3, GT_GT_EQ)
+                } else {
+                    self.fixed(2, GT_GT)
+                }
             }
             b'>' => self.with_eq(GT_EQ, GT),
             b'&' if next == Some(b'&') => {
@@ -395,6 +410,7 @@ impl<'a> Scanner<'a> {
         if self.is(self.pos + 1, b'=') { self.fixed(2, with) } else { self.fixed(1, without) }
     }
 
+    /// A carriage return in code. Alone, it is an error and counts as a line break.
     fn carriage_return(&mut self) {
         let start = self.pos;
         if self.is(start + 1, b'\n') {
@@ -402,13 +418,41 @@ impl<'a> Scanner<'a> {
             return;
         }
         self.pos += 1;
+        self.lone_carriage_return(start, "use a normal line break", "\n");
+    }
+
+    /// Reports a carriage return at `at` that is not followed by a line feed.
+    fn lone_carriage_return(&mut self, at: usize, fix: &str, replacement: &str) {
         self.report(
             Diagnostic::error("a carriage return must be followed by a line feed")
                 .with_code(codes::LONE_CARRIAGE_RETURN)
-                .primary(span(start, start + 1), "a carriage return (U+000D) on its own")
+                .primary(span(at, at + 1), "a carriage return (U+000D) on its own")
                 .note("Quell files end lines with a line feed (LF) or CR LF")
-                .suggest("use a normal line break", span(start, start + 1), "\n"),
+                .suggest(fix, span(at, at + 1), replacement),
         );
+    }
+
+    /// Whether a byte order mark (U+FEFF, the bytes EF BB BF) starts at `index`.
+    fn is_bom_at(&self, index: usize) -> bool {
+        self.starts_with_at(index, "\u{FEFF}")
+    }
+
+    /// Reports a byte order mark at `at` that is not at the very start of the file.
+    fn stray_byte_order_mark(&mut self, at: usize, in_string: bool) {
+        let here = span(at, at + '\u{FEFF}'.len_utf8());
+        let diagnostic =
+            Diagnostic::error("a byte order mark can only come at the very start of a file")
+                .with_code(codes::STRAY_BYTE_ORDER_MARK)
+                .primary(here, "an invisible byte order mark (U+FEFF)");
+        self.report(if in_string {
+            diagnostic.suggest(
+                "to put this character in a string, write `\\u{FEFF}`",
+                here,
+                "\\u{FEFF}",
+            )
+        } else {
+            diagnostic.suggest("remove it", here, "")
+        });
     }
 
     fn nul(&mut self, start: usize) {
@@ -434,7 +478,11 @@ impl<'a> Scanner<'a> {
             Diagnostic::error(format!("Quell uses the word `{word}` instead of `{written}`"))
                 .with_code(code)
                 .primary(span(start, end), format!("write `{word}` here"))
-                .suggest(format!("write `{word}`, as in `{example}`"), span(start, end), replacement),
+                .suggest(
+                    format!("write `{word}`, as in `{example}`"),
+                    span(start, end),
+                    replacement,
+                ),
         );
     }
 
@@ -455,7 +503,11 @@ impl<'a> Scanner<'a> {
             Diagnostic::error("a range must say whether it includes the end")
                 .with_code(codes::BARE_RANGE)
                 .primary(here, "write `..<` or `..=` here")
-                .suggest("to stop before the end, write `..<` (`0..<10` stops at 9)", here, "..<")
+                .suggest(
+                    "to stop before the end, write `..<` (`0..<10` stops before 10)",
+                    here,
+                    "..<",
+                )
                 .suggest("to include the end, write `..=` (`1..=10` includes 10)", here, "..="),
         );
         kind
@@ -475,12 +527,20 @@ impl<'a> Scanner<'a> {
                 from -= 1;
             }
             let from = if from > 0 && self.bytes[from - 1] != b'\n' { from } else { start };
-            diagnostic.suggest("a line break ends a statement, so remove the `;`", span(from, start + 1), "")
+            diagnostic.suggest(
+                "a line break ends a statement, so remove the `;`",
+                span(from, start + 1),
+                "",
+            )
         } else {
             let indent = self.indentation_of_line(start).to_string();
+            let mut from = start;
+            while from > 0 && matches!(self.bytes[from - 1], b' ' | b'\t') {
+                from -= 1;
+            }
             diagnostic.suggest(
                 "put each statement on its own line",
-                span(start, after),
+                span(from, after),
                 format!("\n{indent}"),
             )
         };
@@ -525,12 +585,7 @@ impl<'a> Scanner<'a> {
         let end = start + c.len_utf8();
         if c == '\u{FEFF}' {
             self.pos = end;
-            self.report(
-                Diagnostic::error("a byte order mark can only come at the very start of a file")
-                    .with_code(codes::STRAY_BYTE_ORDER_MARK)
-                    .primary(span(start, end), "an invisible byte order mark (U+FEFF)")
-                    .suggest("remove it", span(start, end), ""),
-            );
+            self.stray_byte_order_mark(start, false);
             return ERROR;
         }
         if let Some(name) = unusual_space(c) {
@@ -595,15 +650,18 @@ impl<'a> Scanner<'a> {
         }
         let here = span(start, self.pos);
         let mut diagnostic =
-            Diagnostic::error(format!("Quell doesn't use the character {}", describe_char(first)))
+            Diagnostic::error(format!("Quell doesn't use {}", describe_char(first)))
                 .with_code(codes::UNKNOWN_CHARACTER)
                 .primary(here, "this character can't start any part of Quell code");
-        diagnostic = match first {
-            '\\' => diagnostic.note("a backslash is only used for escapes inside strings, like `\\n`"),
-            '`' => diagnostic.note("strings use double quotes: `\"text\"`"),
-            '$' => diagnostic.note("to put a value into a string, write `{name}` inside the string"),
-            _ => diagnostic,
-        };
+        diagnostic =
+            match first {
+                '\\' => diagnostic
+                    .note("a backslash is only used for escapes inside strings, like `\\n`"),
+                '`' => diagnostic.note("strings use double quotes: `\"text\"`"),
+                '$' => diagnostic
+                    .note("to put a value into a string, write `{name}` inside the string"),
+                _ => diagnostic,
+            };
         self.report(diagnostic.suggest("remove it", here, ""));
         ERROR
     }
@@ -628,15 +686,16 @@ impl<'a> Scanner<'a> {
     }
 
     /// The end of a line comment that starts at `start`: the line break, which is not part of
-    /// the comment. Reports NUL characters inside it.
+    /// the comment. A carriage return on its own also ends it (`code_token` reports it and reads
+    /// it as a line break). Reports NUL characters and byte order marks inside the comment.
     fn line_comment_end(&mut self, start: usize) -> usize {
         let mut index = start;
         while let Some(&b) = self.bytes.get(index) {
-            if b == b'\n' || (b == b'\r' && self.is(index + 1, b'\n')) {
-                break;
-            }
-            if b == 0 {
-                self.nul(index);
+            match b {
+                b'\n' | b'\r' => break,
+                0 => self.nul(index),
+                0xEF if self.is_bom_at(index) => self.stray_byte_order_mark(index, false),
+                _ => {}
             }
             index += 1;
         }
@@ -659,8 +718,13 @@ impl<'a> Scanner<'a> {
                 open.push(index);
                 index += 2;
             } else {
-                if b == 0 {
-                    self.nul(index);
+                match b {
+                    0 => self.nul(index),
+                    b'\r' if !self.is(index + 1, b'\n') => {
+                        self.lone_carriage_return(index, "use a normal line break", "\n");
+                    }
+                    0xEF if self.is_bom_at(index) => self.stray_byte_order_mark(index, false),
+                    _ => {}
                 }
                 index += 1;
             }
@@ -669,7 +733,8 @@ impl<'a> Scanner<'a> {
         let mut diagnostic = Diagnostic::error("this block comment is never closed")
             .with_code(codes::UNCLOSED_BLOCK_COMMENT)
             .primary(span(start, start + 2), "this `/*` has no matching `*/`");
-        for &nested in &open[1..] {
+        // Show a few of the nested comments that are still open, not thousands.
+        for &nested in open[1..].iter().rev().take(3).rev() {
             diagnostic = diagnostic
                 .secondary(span(nested, nested + 2), "this nested `/*` also needs its own `*/`");
         }
@@ -767,6 +832,7 @@ impl<'a> Scanner<'a> {
             b'b' => (2, "binary", "only the digits 0 and 1"),
             _ => (8, "octal", "only the digits 0 to 7"),
         };
+        let article = if base == 8 { "an" } else { "a" };
         if prefix != lower {
             let here = span(start + 1, start + 2);
             let fixed = (lower as char).to_string();
@@ -792,7 +858,7 @@ impl<'a> Scanner<'a> {
                     .with_code(codes::PREFIX_WITHOUT_DIGITS)
                     .primary(span(start, self.pos), format!("no {name} digits here"))
                     .help(format!(
-                        "a {name} number uses {digit_names}, as in `0{}{}`",
+                        "{article} {name} number uses {digit_names}, as in `0{}{}`",
                         lower as char,
                         match base {
                             16 => "ff",
@@ -808,9 +874,12 @@ impl<'a> Scanner<'a> {
             let at = digits_start + bad;
             let digit = self.bytes[at] as char;
             let mut diagnostic =
-                Diagnostic::error(format!("`{digit}` is not a {name} digit"))
+                Diagnostic::error(format!("`{digit}` is not {article} {name} digit"))
                     .with_code(codes::DIGIT_OUTSIDE_BASE)
-                    .primary(span(at, at + 1), format!("a {name} number uses {digit_names}"));
+                    .primary(
+                        span(at, at + 1),
+                        format!("{article} {name} number uses {digit_names}"),
+                    );
             let decimal = !digits.starts_with(['0', '_'])
                 && digits.bytes().all(|b| b.is_ascii_digit() || b == b'_')
                 && !has_suffix;
@@ -821,7 +890,8 @@ impl<'a> Scanner<'a> {
                     "",
                 );
             } else {
-                diagnostic = diagnostic.help("change the digit, or write the number in another base");
+                diagnostic =
+                    diagnostic.help("change the digit, or write the number in another base");
             }
             self.report(diagnostic);
         }
@@ -968,7 +1038,8 @@ impl<'a> Scanner<'a> {
                     Diagnostic::error("a character literal needs exactly one character")
                         .with_code(codes::EMPTY_CHAR)
                         .primary(span(start, self.pos), "nothing between the quotes")
-                        .help("put one character between the quotes, such as `'a'` or `' '`"),
+                        .help("put one character between the quotes, such as `'a'` or `' '`")
+                        .suggest("for empty text, use a string", span(start, self.pos), "\"\""),
                 );
                 return CHAR;
             }
@@ -1015,10 +1086,26 @@ impl<'a> Scanner<'a> {
                 .note("this is a letter followed by separate accents, which together look like one character")
                 .suggest(format!("write it as the single character `{composed}`"), span(start + 1, close), composed),
             _ => {
+                // Keep escapes as they are; double the braces that a string would read as a hole.
                 let mut text = String::with_capacity(content.len() + 2);
                 text.push('"');
-                for c in content.chars() {
+                let mut chars = content.chars().peekable();
+                while let Some(c) = chars.next() {
                     match c {
+                        '\\' => {
+                            text.push(c);
+                            let Some(escaped) = chars.next() else { break };
+                            text.push(escaped);
+                            if escaped == 'u' && chars.peek() == Some(&'{') {
+                                // `\u{...}` runs to its `}`.
+                                for d in chars.by_ref() {
+                                    text.push(d);
+                                    if d == '}' {
+                                        break;
+                                    }
+                                }
+                            }
+                        }
                         '"' => text.push_str("\\\""),
                         '{' => text.push_str("{{"),
                         '}' => text.push_str("}}"),
@@ -1033,23 +1120,24 @@ impl<'a> Scanner<'a> {
         CHAR
     }
 
-    /// Reports a NUL or control character at `at` inside a string or character literal.
+    /// Reports a NUL, a control character, a carriage return on its own or a byte order mark
+    /// at `at` inside a string or character literal.
     fn check_control_in_literal(&mut self, at: usize, raw: bool) {
         let Some(&b) = self.bytes.get(at) else { return };
         if b == 0 {
             self.nul(at);
             return;
         }
+        if b == 0xEF && self.is_bom_at(at) {
+            self.stray_byte_order_mark(at, !raw);
+            return;
+        }
         if b == b'\r' {
-            let here = span(at, at + 1);
-            let diagnostic = Diagnostic::error("a carriage return must be followed by a line feed")
-                .with_code(codes::LONE_CARRIAGE_RETURN)
-                .primary(here, "a carriage return (U+000D) on its own");
-            self.report(if raw {
-                diagnostic.suggest("remove it", here, "")
+            if raw {
+                self.lone_carriage_return(at, "remove it", "");
             } else {
-                diagnostic.suggest("write it as the escape `\\r`", here, "\\r")
-            });
+                self.lone_carriage_return(at, "write it as the escape `\\r`", "\\r");
+            }
             return;
         }
         if !is_forbidden_control(b) {
@@ -1172,8 +1260,9 @@ impl<'a> Scanner<'a> {
         }
         if digits.is_empty() || !all_hex {
             self.report(
-                malformed("`\\u{...}` needs a hex number of 1 to 6 digits")
-                    .help("write the code of the character in hex, such as `\\u{E9}` or `\\u{1F600}`"),
+                malformed("`\\u{...}` needs a hex number of 1 to 6 digits").help(
+                    "write the code of the character in hex, such as `\\u{E9}` or `\\u{1F600}`",
+                ),
             );
             return;
         }
@@ -1187,16 +1276,18 @@ impl<'a> Scanner<'a> {
                     trimmed.to_string(),
                 )
             } else {
-                diagnostic.note("the largest character code is `10FFFF`")
+                diagnostic.note("the largest character code is `10FFFF`").help(
+                    "write the code of the character in hex, such as `\\u{E9}` or `\\u{1F600}`",
+                )
             });
             return;
         }
         let value = u32::from_str_radix(digits, 16).unwrap_or(u32::MAX);
         if char::from_u32(value).is_none() {
             let reason = if (0xD800..=0xDFFF).contains(&value) {
-                "codes from D800 to DFFF are surrogates, which are not characters"
+                "the codes from `D800` to `DFFF` are surrogates, which are not characters"
             } else {
-                "the largest character code is 10FFFF"
+                "the largest character code is `10FFFF`"
             };
             self.report(
                 Diagnostic::error(format!("`\\u{{{digits}}}` is not a Unicode character"))
@@ -1255,7 +1346,8 @@ impl<'a> Scanner<'a> {
         let quotes = if s.multi { 3 } else { 1 };
         let end = index + quotes + s.hashes;
         let bytes = self.bytes.get(index..end)?;
-        let ok = bytes[..quotes].iter().all(|&b| b == b'"') && bytes[quotes..].iter().all(|&b| b == b'#');
+        let ok = bytes[..quotes].iter().all(|&b| b == b'"')
+            && bytes[quotes..].iter().all(|&b| b == b'#');
         ok.then_some(end)
     }
 
@@ -1358,7 +1450,11 @@ impl<'a> Scanner<'a> {
                     self.check_control_in_literal(self.pos, s.raw());
                     self.pos += 1;
                 }
-                // Every byte that needs attention is ASCII, and the bytes of a multi-byte
+                0xEF if self.is_bom_at(self.pos) => {
+                    self.check_control_in_literal(self.pos, s.raw());
+                    self.pos += '\u{FEFF}'.len_utf8();
+                }
+                // Every other byte that needs attention is ASCII, and the bytes of a multi-byte
                 // character never are, so stepping byte by byte never splits a character.
                 _ => self.pos += 1,
             }
@@ -1418,8 +1514,7 @@ impl<'a> Scanner<'a> {
             while lines.peek().is_some_and(|line| (line.ws_start as u32) < token.start) {
                 lines.next();
             }
-            let Some(line) = lines.peek().filter(|line| line.ws_start as u32 == token.start)
-            else {
+            let Some(line) = lines.peek().filter(|line| line.ws_start as u32 == token.start) else {
                 out.push(token);
                 continue;
             };
@@ -1450,10 +1545,11 @@ impl<'a> Scanner<'a> {
             if mid_line && s.lines.is_empty() {
                 // `"""text"""` on one line.
                 let content = &self.text[text_start..end_end - closer.len()];
-                let mut diagnostic =
-                    Diagnostic::error("a string that starts with `\"\"\"` must start its text on the next line")
-                        .with_code(codes::TEXT_AFTER_MULTILINE_OPENING)
-                        .primary(span(s.open, s.open_end), "text follows on the same line");
+                let mut diagnostic = Diagnostic::error(
+                    "a string that starts with `\"\"\"` must start its text on the next line",
+                )
+                .with_code(codes::TEXT_AFTER_MULTILINE_OPENING)
+                .primary(span(s.open, s.open_end), "text follows on the same line");
                 if !content.contains('"') {
                     diagnostic = diagnostic.suggest_edits(
                         "for text on one line, use a normal string",
@@ -1463,20 +1559,23 @@ impl<'a> Scanner<'a> {
                         ],
                     );
                 } else {
-                    diagnostic = diagnostic.help("for text on one line, use a normal string such as `\"text\"`");
+                    diagnostic = diagnostic
+                        .help("for text on one line, use a normal string such as `\"text\"`");
                 }
                 self.report(diagnostic);
                 return;
             }
             self.report(
-                Diagnostic::error("a string that starts with `\"\"\"` must start its text on the next line")
-                    .with_code(codes::TEXT_AFTER_MULTILINE_OPENING)
-                    .primary(span(s.open, s.open_end), "text follows on the same line")
-                    .suggest(
-                        "move the text to the next line",
-                        span(text_start, text_start),
-                        format!("\n{prefix_text}"),
-                    ),
+                Diagnostic::error(
+                    "a string that starts with `\"\"\"` must start its text on the next line",
+                )
+                .with_code(codes::TEXT_AFTER_MULTILINE_OPENING)
+                .primary(span(s.open, s.open_end), "text follows on the same line")
+                .suggest(
+                    "move the text to the next line",
+                    span(text_start, text_start),
+                    format!("\n{prefix_text}"),
+                ),
             );
         }
         if mid_line {
@@ -1504,15 +1603,17 @@ impl<'a> Scanner<'a> {
                 span(line.ws_start, line.ws_end)
             };
             self.report(
-                Diagnostic::error(format!("this line is less indented than the closing `{closer}`"))
-                    .with_code(codes::LESS_INDENTED_LINE)
-                    .primary(here, "not indented enough")
-                    .secondary(closer_span, "this sets the indentation that every line loses")
-                    .suggest(
-                        "indent the line at least as far as the closing delimiter",
-                        span(line.ws_start, line.ws_end),
-                        prefix_text.to_string(),
-                    ),
+                Diagnostic::error(format!(
+                    "this line is less indented than the closing `{closer}`"
+                ))
+                .with_code(codes::LESS_INDENTED_LINE)
+                .primary(here, "not indented enough")
+                .secondary(closer_span, "this sets the indentation that every line loses")
+                .suggest(
+                    "indent the line at least as far as the closing delimiter",
+                    span(line.ws_start, line.ws_end),
+                    prefix_text.to_string(),
+                ),
             );
         }
     }
@@ -1521,7 +1622,7 @@ impl<'a> Scanner<'a> {
     fn unclosed_string(&mut self, s: StrState) {
         let at = self.pos;
         let closer = Self::closer_text(&s);
-        let opening = span(s.open, s.open_end + s.hashes.min(0));
+        let opening = span(s.open, s.open_end);
         if s.multi {
             self.finish_multiline(s, at, at, (at, at), false);
             self.report(
@@ -1537,12 +1638,30 @@ impl<'a> Scanner<'a> {
             return;
         }
         self.push(STRING_END, at);
-        self.report(
-            Diagnostic::error("this string is never closed")
-                .with_code(codes::UNCLOSED_STRING)
-                .primary(opening, "the line ends before the closing quote")
-                .suggest(format!("add `{closer}` where the text ends"), span(at, at), closer),
-        );
+        let note = if s.raw() {
+            "a raw string on one line can't hold a line break; for several lines, start it with `#\"\"\"` on a line of its own"
+        } else {
+            "a string can't hold a line break; write `\\n` for one, or use a multi-line string that starts with `\"\"\"`"
+        };
+        let ends = if at >= self.bytes.len() { "the file ends" } else { "the line ends" };
+        // A `\\` right before the end would turn an added `"` into the escape `\\"`.
+        let dangling_backslash = !s.raw()
+            && self.tokens.len() >= 2
+            && self.tokens[self.tokens.len() - 2].kind == STRING_ESCAPE
+            && self.tokens[self.tokens.len() - 2].start as usize + 1 == at;
+        let diagnostic = Diagnostic::error("this string is never closed")
+            .with_code(codes::UNCLOSED_STRING)
+            .primary(opening, format!("{ends} before the closing `{closer}`"))
+            .note(note);
+        self.report(if dangling_backslash {
+            diagnostic.suggest(
+                format!("write the `\\` twice and add `{closer}` where the text ends"),
+                span(at, at),
+                format!("\\{closer}"),
+            )
+        } else {
+            diagnostic.suggest(format!("add `{closer}` where the text ends"), span(at, at), closer)
+        });
     }
 
     // ------------------------------------------------------------------
@@ -1552,18 +1671,6 @@ impl<'a> Scanner<'a> {
     fn open_hole(&mut self, s: StrState) {
         let brace = self.pos;
         self.modes.push(Mode::Str(s));
-        if self.rescanned > self.rescan_limit {
-            let here = span(brace, brace + 1);
-            self.report(
-                Diagnostic::error("too many `{` in this file are never closed; this one is read as text")
-                    .with_code(codes::TOO_MANY_UNCLOSED_HOLES)
-                    .primary(here, "read as a literal brace")
-                    .suggest("for a literal brace, write `{{`", here, "{{"),
-            );
-            self.push_text(brace);
-            self.pos += 1;
-            return;
-        }
         let hole = HoleState {
             brace,
             start_token: self.tokens.len(),
@@ -1581,15 +1688,15 @@ impl<'a> Scanner<'a> {
 
     /// Reads one token inside the hole on top of the mode stack.
     fn hole_token(&mut self) {
-        let Some(Mode::Hole(mut hole)) = self.modes.pop() else { return };
+        let Some(Mode::Hole(hole)) = self.modes.pop() else { return };
         let pos = self.pos;
         let Some(&b) = self.bytes.get(pos) else {
-            self.fail_hole(hole);
+            self.fail_hole(hole, 0);
             return;
         };
         match b {
             b'\n' | b'\r' => {
-                self.fail_hole(hole);
+                self.fail_hole(hole, 0);
                 return;
             }
             b'}' if hole.counts[2] == 0 => {
@@ -1655,7 +1762,10 @@ impl<'a> Scanner<'a> {
                     .suggest_edits(
                         format!("for literal braces, write `{{{{{inside}}}}}`"),
                         vec![
-                            Edit { span: span(hole.brace, hole.brace + 1), replacement: "{{".into() },
+                            Edit {
+                                span: span(hole.brace, hole.brace + 1),
+                                replacement: "{{".into(),
+                            },
                             Edit { span: span(end, end + 1), replacement: "}}".into() },
                         ],
                     ),
@@ -1674,7 +1784,7 @@ impl<'a> Scanner<'a> {
         }
         if !self.is(end, b'}') {
             self.pos = end;
-            self.fail_hole(hole);
+            self.fail_hole(hole, 0);
             return;
         }
         self.push(FORMAT_SPEC, colon);
@@ -1691,19 +1801,18 @@ impl<'a> Scanner<'a> {
                 .primary(here, "invalid format spec")
                 .note("a format spec is written `[width][.precision][kind]`, as in `.2` (two decimals), `5` (at least 5 characters) or `02x` (hex, padded with zeros to 2 characters)");
             let without_spaces: String = spec.chars().filter(|c| !c.is_whitespace()).collect();
-            if spec.is_empty() {
-                diagnostic = diagnostic.suggest("remove the `:`", span(colon, colon + 1), "");
-            } else if without_spaces != spec && parse_format_spec(&without_spaces).is_some() {
-                diagnostic = diagnostic.suggest(
-                    "remove the spaces",
-                    span(colon + 1, end),
-                    without_spaces,
-                );
-            }
             if hole.items == 1 && hole.last_was_string {
+                // Most likely JSON written in a normal string, as in `"{"a": 1}"`.
                 diagnostic = diagnostic.help(
                     "to write JSON or other text with braces, use a raw string, such as `#\"{\"a\": 1}\"#`",
                 );
+            } else if spec.is_empty() {
+                diagnostic = diagnostic.suggest("remove the `:`", span(colon, colon + 1), "");
+            } else if without_spaces != spec && parse_format_spec(&without_spaces).is_some() {
+                diagnostic =
+                    diagnostic.suggest("remove the spaces", span(colon + 1, end), without_spaces);
+            } else {
+                diagnostic = diagnostic.suggest("remove the format spec", here, "");
             }
             self.report(diagnostic);
         }
@@ -1716,7 +1825,10 @@ impl<'a> Scanner<'a> {
                     .suggest_edits(
                         "for literal braces, double them",
                         vec![
-                            Edit { span: span(hole.brace, hole.brace + 1), replacement: "{{".into() },
+                            Edit {
+                                span: span(hole.brace, hole.brace + 1),
+                                replacement: "{{".into(),
+                            },
                             Edit { span: span(end, end + 1), replacement: "}}".into() },
                         ],
                     ),
@@ -1727,25 +1839,23 @@ impl<'a> Scanner<'a> {
         self.open_holes -= 1;
     }
 
-    /// `//` or `/*` inside a hole. The comment is reported and kept as trivia; it runs up to
-    /// the `}` that would close the hole, or for `/*` up to its `*/` on the same line.
+    /// `//` or `/*` inside a hole. The comment is reported and kept as trivia. It runs up to
+    /// the next `}` (which then closes the hole) or the end of the line, and a `/*` comment ends
+    /// earlier at its `*/`. Everything scanned is consumed, so this stays linear.
     fn comment_in_hole(&mut self) {
         let start = self.pos;
         let block = self.is(start + 1, b'*');
         let mut end = start + 2;
-        let mut closed_block = false;
         while let Some(&b) = self.bytes.get(end) {
-            if matches!(b, b'\n' | b'\r') || (!block && b == b'}') {
+            if matches!(b, b'\n' | b'\r' | b'}') {
                 break;
             }
             if block && b == b'*' && self.is(end + 1, b'/') {
                 end += 2;
-                closed_block = true;
                 break;
             }
             end += 1;
         }
-        let end = if block && !closed_block { start + 2 } else { end };
         self.push(if block { BLOCK_COMMENT } else { LINE_COMMENT }, start);
         self.pos = end;
         let here = span(start, end);
@@ -1758,83 +1868,61 @@ impl<'a> Scanner<'a> {
     }
 
     /// The innermost hole is never closed: drop everything read since its `{` and read the
-    /// rest of the line again as string text (spec/lexical.md, section 9.3).
+    /// rest of the line again as string text (spec/lexical.md, section 9.3). `s`, the string
+    /// that was being read inside the hole, has already been taken off the mode stack.
     fn fail_innermost_hole(&mut self) {
-        let Some(index) = self.modes.iter().rposition(|mode| matches!(mode, Mode::Hole(_)))
-        else {
+        let Some(index) = self.modes.iter().rposition(|mode| matches!(mode, Mode::Hole(_))) else {
             return;
         };
         let mut removed = self.modes.drain(index..);
         let Some(Mode::Hole(hole)) = removed.next() else { return };
-        drop(removed);
-        self.fail_hole(hole);
+        // Only strings can be above the innermost hole.
+        let strings_inside = 1 + removed.count();
+        self.fail_hole(hole, strings_inside);
     }
 
     /// See `fail_innermost_hole`. `hole` has already been taken off the mode stack, together
-    /// with every mode above it.
-    fn fail_hole(&mut self, hole: HoleState) {
+    /// with every mode above it: `strings_inside` strings that were opened inside it and are
+    /// still open.
+    ///
+    /// Reading again is limited to a few times the length of the line. Past that limit, the
+    /// hole is instead closed where the line ends (with the same error), so that a line made
+    /// of thousands of unclosed holes is still read in linear time.
+    fn fail_hole(&mut self, hole: HoleState, strings_inside: usize) {
         self.open_holes -= 1;
-        self.rescanned += self.pos.saturating_sub(hole.brace);
-        self.tokens.truncate(hole.start_token);
-        self.diags.truncate(hole.diag_len);
-        self.pos = hole.brace + 1;
-        self.push_text(hole.brace);
+        let (line_start, line_end) = self.rescan_line;
+        if !(line_start..line_end).contains(&hole.brace) {
+            let start =
+                self.bytes[..hole.brace].iter().rposition(|&b| b == b'\n').map_or(0, |at| at + 1);
+            let end = self.bytes[hole.brace..]
+                .iter()
+                .position(|&b| b == b'\n')
+                .map_or(self.bytes.len(), |len| hole.brace + len);
+            self.rescan_line = (start, end + 1);
+            self.rescanned = 0;
+            self.rescan_limit = (end - start).saturating_mul(4).saturating_add(4096);
+        }
         let here = span(hole.brace, hole.brace + 1);
-        self.report(
+        let diagnostic =
             Diagnostic::error("this `{` starts a value inside the string, but it is never closed")
                 .with_code(codes::UNCLOSED_HOLE)
                 .primary(here, "the line ends before the matching `}`")
                 .suggest("for a literal brace, write `{{`", here, "{{")
-                .help("for JSON, use a raw string such as `#\"{\"a\": 1}\"#`"),
-        );
-    }
-}
-
-/// Reports a fenced code block in a run of doc comments that is opened and never closed
-/// (spec/lexical.md, section 4.3).
-pub(crate) fn check_doc_fences(text: &str, tokens: &[RawToken], diags: &mut Vec<Diagnostic>) {
-    let end_of = |index: usize| tokens.get(index + 1).map_or(text.len(), |t| t.start as usize);
-    let mut open_fence: Option<usize> = None;
-    let mut last_doc: Option<usize> = None;
-    let mut breaks_since_doc = 0;
-    let mut finish_run = |open: Option<usize>, last: Option<usize>, diags: &mut Vec<Diagnostic>| {
-        let (Some(open), Some(last)) = (open, last) else { return };
-        let start = tokens[open].start as usize;
-        let line_start = text[..start].rfind('\n').map_or(0, |index| index + 1);
-        let indent: String =
-            text[line_start..start].chars().take_while(|c| *c == ' ' || *c == '\t').collect();
-        let at = end_of(last);
-        diags.push(
-            Diagnostic::error("this code block in a doc comment is never closed")
-                .with_code(codes::UNCLOSED_DOC_FENCE)
-                .primary(span(start, end_of(open)), "this ``` opens a code block")
-                .suggest(
-                    "close it with a line that holds only ```",
-                    span(at, at),
-                    format!("\n{indent}/// ```"),
-                ),
-        );
-    };
-    for (index, token) in tokens.iter().enumerate() {
-        match token.kind {
-            DOC_COMMENT => {
-                if last_doc.is_some() && breaks_since_doc != 1 {
-                    finish_run(open_fence.take(), last_doc, diags);
-                }
-                let body = &text[token.start as usize + 3..end_of(index)];
-                if body.trim_start_matches(' ').starts_with("```") {
-                    open_fence = if open_fence.is_some() { None } else { Some(index) };
-                }
-                last_doc = Some(index);
-                breaks_since_doc = 0;
+                .help("for JSON, use a raw string such as `#\"{\"a\": 1}\"#`");
+        let cost = self.pos.saturating_sub(hole.brace);
+        if self.rescanned.saturating_add(cost) > self.rescan_limit {
+            for _ in 0..strings_inside {
+                self.push(STRING_END, self.pos);
             }
-            WHITESPACE => {}
-            LINE_BREAK => breaks_since_doc += 1,
-            _ => {
-                finish_run(open_fence.take(), last_doc.take(), diags);
-                breaks_since_doc = 0;
-            }
+            self.push(HOLE_END, self.pos);
+            self.report(diagnostic);
+            return;
         }
+        self.rescanned += cost;
+        self.tokens.truncate(hole.start_token);
+        self.diags.truncate(hole.diag_len);
+        self.pos = hole.brace + 1;
+        self.push_text(hole.brace);
+        self.report(diagnostic);
     }
-    finish_run(open_fence, last_doc, diags);
 }

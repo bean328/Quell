@@ -120,6 +120,8 @@ mod tests {
         assert!(is_ident_start('_') && is_ident_start('a') && is_ident_start('\u{E9}'));
         assert!(!is_ident_start('1') && !is_ident_start('$'));
         assert!(is_ident_continue('1') && is_ident_continue('\u{301}'));
-        assert!(!is_ident_continue('-') && !is_ident_continue('\u{200D}'));
+        // Since Unicode 15.1 the zero-width joiner is XID_Continue; the word joiner is not.
+        assert!(is_ident_continue('\u{200D}'));
+        assert!(!is_ident_continue('-') && !is_ident_continue('\u{2060}'));
     }
 }

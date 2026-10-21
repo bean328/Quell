@@ -22,7 +22,8 @@
 //!
 //! When a line break is significant, the first `LINE_BREAK` token since `P` becomes `NEWLINE`.
 //! If the only line break is a block comment that spans lines or a `;`, a `NEWLINE` token with
-//! no text is inserted right after it.
+//! no text is added right after it. The trivia between two tokens is held back until the next
+//! token is known, so every token is pushed once, in order.
 
 use quell_diagnostics::{Diagnostic, Span};
 
@@ -32,7 +33,7 @@ use super::scanner::RawToken;
 use crate::SyntaxKind::{self, *};
 
 /// Marks significant line breaks and matches brackets. Returns the final tokens and, for each
-/// token, the index of its partner (`u32::MAX` for none).
+/// token, the index of its partner (`NO_PARTNER` for none).
 pub(crate) fn mark(
     text: &str,
     raw: &[RawToken],
@@ -46,47 +47,57 @@ pub(crate) fn mark(
         segments: vec![[0; 3]],
         diags,
     };
+    let text_end = text.len() as u32;
+    let end_of = |index: usize| raw.get(index + 1).map_or(text_end, |next| next.start);
     let mut prev: Option<usize> = None;
     let mut prev_prev: Option<usize> = None;
-    let mut first_line_break: Option<usize> = None;
-    let mut first_other_break: Option<usize> = None;
+    // The trivia since the previous non-trivia token is `raw[trivia_from..index]`.
+    let mut trivia_from = 0;
 
     for (index, token) in raw.iter().enumerate() {
-        let end = raw.get(index + 1).map_or(token.start, |next| next.start);
         if token.kind.is_trivia() {
-            let at = pass.push(token.kind, token.start, false);
-            match token.kind {
-                LINE_BREAK => {
-                    first_line_break.get_or_insert(at);
-                }
-                SEMICOLON => {
-                    first_other_break.get_or_insert(at);
-                }
-                BLOCK_COMMENT if text[token.start as usize..end as usize].contains('\n') => {
-                    first_other_break.get_or_insert(at);
-                }
-                _ => {}
-            }
             continue;
         }
-
-        let line_break_before = first_line_break.is_some() || first_other_break.is_some();
-        if line_break_before && pass.is_significant(prev, prev_prev, token.kind) {
-            if let Some(at) = first_line_break {
-                pass.out[at].kind = NEWLINE;
-            } else if let Some(at) = first_other_break {
-                let start = pass.out.get(at + 1).map_or(token.start, |next| next.start);
-                pass.out.insert(at + 1, Token { kind: NEWLINE, start, line_break_before: false });
-                pass.partners.insert(at + 1, NO_PARTNER);
+        let trivia = &raw[trivia_from..index];
+        // The first line break, and the first block comment or `;` that counts as one.
+        let mut first_line_break = None;
+        let mut first_other_break = None;
+        for (offset, t) in trivia.iter().enumerate() {
+            let counts_as_break = match t.kind {
+                LINE_BREAK => {
+                    first_line_break.get_or_insert(offset);
+                    false
+                }
+                SEMICOLON => true,
+                BLOCK_COMMENT => {
+                    let comment = &text[t.start as usize..end_of(trivia_from + offset) as usize];
+                    comment.contains(['\n', '\r'])
+                }
+                _ => false,
+            };
+            if counts_as_break {
+                first_other_break.get_or_insert(offset);
             }
         }
-        first_line_break = None;
-        first_other_break = None;
+        let line_break_before = first_line_break.is_some() || first_other_break.is_some();
+        let newline = line_break_before && pass.is_significant(prev, prev_prev, token.kind);
+        for (offset, t) in trivia.iter().enumerate() {
+            let as_newline = newline && first_line_break == Some(offset);
+            pass.push(if as_newline { NEWLINE } else { t.kind }, t.start, false);
+            if newline && first_line_break.is_none() && first_other_break == Some(offset) {
+                pass.push(NEWLINE, end_of(trivia_from + offset), false);
+            }
+        }
+        trivia_from = index + 1;
 
         let at = pass.push(token.kind, token.start, line_break_before);
-        pass.brackets(at, token.kind, Span::new(token.start, end));
+        pass.brackets(at, token.kind, Span::new(token.start, end_of(index)));
         prev_prev = prev;
         prev = Some(at);
+    }
+    // The scanner always ends with `EOF`, which is not trivia, so nothing is left over.
+    for t in &raw[trivia_from..] {
+        pass.push(t.kind, t.start, false);
     }
     pass.unclosed_at_end();
     (pass.out, pass.partners)
@@ -135,7 +146,12 @@ impl Pass<'_, '_> {
 
     /// The newline rules of spec/lexical.md, section 12.2, for a token of kind `kind` that has
     /// a line break before it.
-    fn is_significant(&self, prev: Option<usize>, prev_prev: Option<usize>, kind: SyntaxKind) -> bool {
+    fn is_significant(
+        &self,
+        prev: Option<usize>,
+        prev_prev: Option<usize>,
+        kind: SyntaxKind,
+    ) -> bool {
         // Rule 1: start or end of file.
         let Some(prev) = prev else { return false };
         if kind == EOF {
@@ -184,19 +200,15 @@ impl Pass<'_, '_> {
     }
 
     fn close_bracket(&mut self, index: usize, kind: SyntaxKind, span: Span) {
-        let Some(slot) = slot(kind) else { return };
-        let open_in_segment = self.segments.last().map_or(0, |counts| counts[slot]);
+        let Some(wanted) = slot(kind) else { return };
+        let open_in_segment = self.segments.last().map_or(0, |counts| counts[wanted]);
         if open_in_segment == 0 {
+            let closer = kind.fixed_text().unwrap_or("");
             let opener = match kind {
                 R_PAREN => "(",
                 R_BRACK => "[",
                 _ => "{",
             };
-            let closer = closer_text(match kind {
-                R_PAREN => L_PAREN,
-                R_BRACK => L_BRACK,
-                _ => L_BRACE,
-            });
             self.diags.push(
                 Diagnostic::error(format!("this `{closer}` doesn't close anything"))
                     .with_code(codes::UNMATCHED_CLOSING_BRACKET)
@@ -206,11 +218,10 @@ impl Pass<'_, '_> {
             return;
         }
         while let Some(open) = self.stack.pop() {
-            if let (Some(open_slot), Some(counts)) = (slot_of(open.kind), self.segments.last_mut())
-            {
+            if let (Some(open_slot), Some(counts)) = (slot(open.kind), self.segments.last_mut()) {
                 counts[open_slot] -= 1;
             }
-            if slot_of(open.kind) == Some(slot) {
+            if slot(open.kind) == Some(wanted) {
                 self.set_partners(open.index, index);
                 return;
             }
@@ -252,7 +263,8 @@ impl Pass<'_, '_> {
             }
             None => {
                 let end = self.text.len() as u32;
-                let prefix = if self.text.ends_with('\n') || self.text.is_empty() { "" } else { "\n" };
+                let prefix =
+                    if self.text.ends_with('\n') || self.text.is_empty() { "" } else { "\n" };
                 diagnostic.suggest(
                     format!("add the missing `{closer}`"),
                     Span::at(end),
@@ -267,13 +279,9 @@ impl Pass<'_, '_> {
         // Report the outermost bracket first, as the reader meets them.
         let open: Vec<Open> = std::mem::take(&mut self.stack);
         for open in &open {
-            if slot_of(open.kind).is_some() {
+            if slot(open.kind).is_some() {
                 self.never_closed(open, None);
             }
         }
     }
-}
-
-fn slot_of(kind: SyntaxKind) -> Option<usize> {
-    slot(kind)
 }
