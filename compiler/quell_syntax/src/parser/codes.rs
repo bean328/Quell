@@ -82,6 +82,22 @@ pub(crate) const MISPLACED_MUT: &str = "Q0169";
 pub(crate) const MEMBER_NOT_ALLOWED: &str = "Q0170";
 pub(crate) const UNDERSCORE_AS_VALUE: &str = "Q0171";
 
+// Habits from other languages, each with the Quell way as the fix (see `habits.rs`)
+pub(crate) const COLON_BLOCK: &str = "Q0180";
+pub(crate) const FUNCTION_KEYWORD: &str = "Q0181";
+pub(crate) const CLASS_KEYWORD: &str = "Q0182";
+pub(crate) const IMPL_KEYWORD: &str = "Q0183";
+pub(crate) const INTERFACE_KEYWORD: &str = "Q0184";
+pub(crate) const ELSE_IF_WORD: &str = "Q0185";
+pub(crate) const CONST_KEYWORD: &str = "Q0186";
+pub(crate) const LET_MUT: &str = "Q0187";
+pub(crate) const SELF_PARAMETER: &str = "Q0188";
+pub(crate) const STRING_PREFIX: &str = "Q0189";
+pub(crate) const FROM_IMPORT: &str = "Q0190";
+pub(crate) const TRIPLE_EQUALS: &str = "Q0191";
+pub(crate) const NEW_KEYWORD: &str = "Q0192";
+pub(crate) const PYTHON_CONDITIONAL: &str = "Q0193";
+
 // ----------------------------------------------------------------------
 // Warnings: Q0400 to Q0499 (spec/grammar.md, section 9.2)
 // ----------------------------------------------------------------------

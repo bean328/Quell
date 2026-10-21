@@ -540,9 +540,9 @@ fn member_list(p: &mut Parser<'_>, container: Container, after: &str) {
     p.bump();
     let saved = p.bracket;
     p.bracket = Bracket::Block;
-    let close = p.partner_of(open);
+    let close = p.list_end(open);
     loop {
-        while p.at(NEWLINE) {
+        while p.at(NEWLINE) && !stmts::at_list_close(p, close) {
             p.bump();
         }
         if stmts::at_list_close(p, close) {
@@ -851,7 +851,7 @@ fn import_list(p: &mut Parser<'_>) {
     let marker = p.start();
     let open = p.pos();
     p.bump();
-    let close = p.partner_of(open);
+    let close = p.list_end(open);
     let mut empty = true;
     loop {
         if p.at(NEWLINE) {

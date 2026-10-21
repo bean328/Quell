@@ -115,11 +115,11 @@ fn binding_catch_in_header(p: &mut Parser<'_>, header: Span, name: Span) {
 /// there is exactly one and it is a jump.
 pub(crate) fn statement_list(p: &mut Parser<'_>, open: Option<usize>) -> Option<Span> {
     let top = open.is_none();
-    let close = open.and_then(|open| p.partner_of(open));
+    let close = open.and_then(|open| p.list_end(open));
     let mut previous: Option<StmtInfo> = None;
     let mut count = 0;
     loop {
-        while p.at(NEWLINE) {
+        while p.at(NEWLINE) && !at_list_close(p, close) {
             p.bump();
         }
         if top {

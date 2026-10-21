@@ -1801,9 +1801,9 @@ fn arm_list(p: &mut Parser<'_>) {
     p.bump();
     let saved = p.bracket;
     p.bracket = Bracket::Block;
-    let close = p.partner_of(open);
+    let close = p.list_end(open);
     loop {
-        while p.at(NEWLINE) {
+        while p.at(NEWLINE) && !stmts::at_list_close(p, close) {
             p.bump();
         }
         if stmts::at_list_close(p, close) {

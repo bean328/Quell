@@ -40,7 +40,9 @@ mod builder;
 pub(crate) mod codes;
 mod exprs;
 mod fixes;
+mod habits;
 mod items;
+mod layout;
 mod patterns;
 mod stmts;
 mod types;
@@ -51,7 +53,7 @@ mod tests;
 use std::cell::Cell;
 use std::collections::HashMap;
 
-use quell_diagnostics::{Diagnostic, Span};
+use quell_diagnostics::{Diagnostic, Edit, Span};
 use rowan::GreenNode;
 
 use crate::SyntaxKind::{self, *};
@@ -73,40 +75,83 @@ const FUEL: u32 = 4096;
 /// No partner, in [`Tok::partner`].
 const NONE: u32 = u32::MAX;
 
-/// Parses a lexed file into a green tree and the parser's diagnostics. The lexer's
-/// diagnostics are not included.
+/// Parses a lexed file into a green tree and the diagnostics of the lexer and the parser.
 pub(crate) fn parse_lexed(lexed: &Lexed<'_>, role: FileRole) -> (GreenNode, Vec<Diagnostic>) {
     let mut parser = Parser::new(lexed, role);
     items::file(&mut parser);
-    let unclosed = std::mem::take(&mut parser.unclosed);
-    let (green, diagnostics) = build_tree(lexed, parser.events);
-    let mut lexer_diagnostics = lexed.diagnostics().to_vec();
-    better_closing_fixes(lexed.text(), &mut lexer_diagnostics, &unclosed);
-    lexer_diagnostics.extend(diagnostics);
-    (green, lexer_diagnostics)
+    let mut diagnostics = lexer_diagnostics(lexed, &parser);
+    let (green, parser_diagnostics) = build_tree(lexed, parser.events);
+    diagnostics.extend(parser_diagnostics);
+    (green, diagnostics)
 }
 
-/// The lexer reports a bracket that is never closed with a fix that adds the closer where the
-/// lexer noticed it was missing: before a closer that doesn't match, or at the end of the file.
-/// The parser knows better where the bracketed construct ended (usually the end of its line),
-/// so it moves the fix there.
-fn better_closing_fixes(text: &str, diagnostics: &mut [Diagnostic], unclosed: &[(u32, u32)]) {
-    for diagnostic in diagnostics.iter_mut() {
-        if diagnostic.code != Some(crate::lexer::codes::UNCLOSED_BRACKET) {
-            continue;
-        }
-        let Some(open) = diagnostic.main_label().map(|label| label.span.start) else { continue };
-        let Some(&(_, end)) = unclosed.iter().find(|(start, _)| *start == open) else { continue };
-        let closer = match text.as_bytes().get(open as usize) {
-            Some(b'(') => ")",
-            Some(b'[') => "]",
-            _ => "}",
-        };
-        for help in &mut diagnostic.helps {
-            if let Some(edit) = help.edits.first_mut() {
-                edit.span = Span::at(end);
-                edit.replacement = closer.to_string();
+/// The lexer's diagnostics, with better errors for brackets that are never closed. The lexer
+/// reports such a bracket with a fix that adds the closer where it noticed it was missing:
+/// before a closer that doesn't match, or at the end of the file. The parser knows better:
+///
+/// - When the indentation shows which `{` was never closed ([`layout::repair_braces`]), its
+///   error replaces the lexer's, with a fix that adds `}` on a new line where the block ends.
+/// - Otherwise the fix moves to where the bracketed construct ended (usually the end of its
+///   line), and a `}` for a block that spans lines goes on a line of its own.
+fn lexer_diagnostics(lexed: &Lexed<'_>, parser: &Parser<'_>) -> Vec<Diagnostic> {
+    let toks = &parser.toks;
+    let brace_at = |offset: u32| {
+        let pos = toks.partition_point(|tok| tok.start < offset);
+        toks.get(pos).filter(|tok| tok.start == offset && tok.kind == L_BRACE).map(|_| pos)
+    };
+    let mut diagnostics = Vec::with_capacity(lexed.diagnostics().len());
+    for diagnostic in lexed.diagnostics() {
+        let mut diagnostic = diagnostic.clone();
+        if diagnostic.code == Some(crate::lexer::codes::UNCLOSED_BRACKET) {
+            let Some(open) = diagnostic.main_label().map(|label| label.span.start) else {
+                diagnostics.push(diagnostic);
+                continue;
+            };
+            if let Some(pos) = brace_at(open) {
+                let repaired = parser.repaired.iter().any(|brace| brace.open == pos);
+                if repaired || toks[pos].partner != NONE {
+                    // Replaced below, or closed after all.
+                    continue;
+                }
             }
+            if let Some(&(_, end)) = parser.unclosed.iter().find(|(start, _)| *start == open) {
+                better_closing_fix(lexed, toks, &mut diagnostic, open, end);
+            }
+        }
+        diagnostics.push(diagnostic);
+    }
+    for &brace in &parser.repaired {
+        diagnostics.push(layout::unclosed_brace_error(lexed.text(), toks, brace));
+    }
+    diagnostics
+}
+
+/// Moves the fix of a bracket that is never closed to `end`, where its construct ended.
+fn better_closing_fix(
+    lexed: &Lexed<'_>,
+    toks: &[Tok],
+    diagnostic: &mut Diagnostic,
+    open: u32,
+    end: u32,
+) {
+    let text = lexed.text();
+    let edit = match text.as_bytes().get(open as usize) {
+        Some(b'(') => Edit { span: Span::at(end), replacement: ")".to_string() },
+        Some(b'[') => Edit { span: Span::at(end), replacement: "]".to_string() },
+        _ => {
+            let pos = toks.partition_point(|tok| tok.start < open);
+            let ends_line = toks.get(pos + 1).is_some_and(|next| next.line_break_before);
+            if ends_line {
+                let indent = fixes::indentation_at(text, open);
+                layout::closing_line(text, end, text.len() as u32, indent)
+            } else {
+                Edit { span: Span::at(end), replacement: " }".to_string() }
+            }
+        }
+    };
+    for help in &mut diagnostic.helps {
+        if let Some(first) = help.edits.first_mut() {
+            *first = edit.clone();
         }
     }
 }
@@ -178,6 +223,9 @@ struct Tok {
     partner: u32,
     /// A line break (of any kind) came before this token.
     line_break_before: bool,
+    /// For an opener that is never closed: where the list it holds ends, found from the
+    /// indentation ([`layout`]), or [`NONE`].
+    vend: u32,
     /// A line break came before this token, but the innermost open bracket is a `(` or `[`
     /// that is never closed. In valid code this break would very likely have ended a
     /// statement, so the parser treats it as a place where a statement may end.
@@ -252,6 +300,8 @@ pub(crate) struct Parser<'t> {
     pub(crate) expr_start: u32,
     /// For each bracket that is never closed: where it starts and where its construct ended.
     unclosed: Vec<(u32, u32)>,
+    /// The braces that the indentation shows are never closed ([`layout::repair_braces`]).
+    repaired: Vec<layout::UnclosedBrace>,
 }
 
 impl std::fmt::Debug for Parser<'_> {
@@ -279,6 +329,7 @@ impl<'t> Parser<'t> {
                 end: span.end,
                 partner: NONE,
                 line_break_before: token.line_break_before,
+                vend: NONE,
                 soft_break: false,
             });
         }
@@ -292,6 +343,7 @@ impl<'t> Parser<'t> {
             }
             position += 1;
         }
+        let repaired = layout::repair_braces(&mut toks, text);
         mark_soft_breaks(&mut toks);
         Parser {
             text,
@@ -312,6 +364,7 @@ impl<'t> Parser<'t> {
             comma_forgiven: usize::MAX,
             expr_start: 0,
             unclosed: Vec::new(),
+            repaired,
         }
     }
 
@@ -427,6 +480,35 @@ impl<'t> Parser<'t> {
         (partner != NONE).then_some(partner as usize)
     }
 
+    /// The tokens the grammar reads.
+    fn toks(&self) -> &[Tok] {
+        &self.toks
+    }
+
+    /// Gives the opener (or `:`) at `pos`, which is never closed, a list that ends at `end`.
+    fn set_list_end(&mut self, pos: usize, end: usize) {
+        if let Some(tok) = self.toks.get_mut(pos) {
+            tok.vend = end as u32;
+        }
+    }
+
+    /// Whether the last token added is `==` or `!=` and the current token follows it with
+    /// nothing between them (for `===` and `!==`).
+    pub(crate) fn last_kind_is_equality_joined(&self) -> bool {
+        matches!(self.last_kind, EQ_EQ | BANG_EQ) && self.nth_span(0).start == self.last_end
+    }
+
+    /// Where the list held by the opener at `pos` ends: its closer, or for an opener that is
+    /// never closed, the end the indentation shows ([`layout`]), if there is one.
+    pub(crate) fn list_end(&self, pos: usize) -> Option<usize> {
+        let tok = self.tok(pos);
+        match (tok.partner, tok.vend) {
+            (NONE, NONE) => None,
+            (NONE, end) => Some(end as usize),
+            (partner, _) => Some(partner as usize),
+        }
+    }
+
     /// Whether the current token comes after a line break inside a bracket that is never
     /// closed (see [`Tok::soft_break`]).
     pub(crate) fn at_soft_break(&self) -> bool {
@@ -525,10 +607,21 @@ impl<'t> Parser<'t> {
     /// Adds the current token to the tree and moves to the next one. Does nothing at the end
     /// of the file.
     pub(crate) fn bump(&mut self) {
+        let kind = self.current_raw();
+        self.bump_as(kind);
+    }
+
+    /// Adds the current token as a token of another kind. Only for a word from another
+    /// language that was reported, such as `def`: it is read as the Quell keyword it stands
+    /// for (`fn`), so the code after it is read as the fix says. The text stays as written.
+    pub(crate) fn bump_remap(&mut self, kind: SyntaxKind) {
+        self.bump_as(kind);
+    }
+
+    fn bump_as(&mut self, kind: SyntaxKind) {
         if self.pos + 1 >= self.toks.len() {
             return;
         }
-        let kind = self.current_raw();
         let end = self.toks[self.pos].end;
         self.events.push(Event::Token { kind, end });
         self.last_start = self.toks[self.pos].start + self.split;
