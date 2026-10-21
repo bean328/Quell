@@ -751,7 +751,7 @@ fn after_fallback(
     });
     let op = p.nth_span(0);
     let left = p.text_of(whole.span()).to_string();
-    let mut diagnostic = Diagnostic::error(format!("a fallback with arithmetic needs parentheses"))
+    let mut diagnostic = Diagnostic::error("a fallback with arithmetic needs parentheses")
         .with_code(codes::FALLBACK_WITH_ARITHMETIC)
         .primary(op, format!("is this applied before or after `{operator}`?"))
         .secondary(whole.span(), "the fallback")
