@@ -241,8 +241,8 @@ fn expr_bp_inner(p: &mut Parser<'_>, min_bp: u8, ctx: Ctx, role: Role) -> Option
     // The last non-associative operator in this chain (levels 9, 12 and 13), with the right
     // operand it had, for special case 1.
     let mut non_assoc: Option<(u8, Span)> = None;
-    // One error for a whole chain such as `a < b < c < d`.
-    let mut chain_reported = false;
+    // A chain such as `a < b < c < d`, reported once when it ends.
+    let mut chain: Option<Chain> = None;
     loop {
         if p.at_fixed_line_end() {
             break;
@@ -278,12 +278,21 @@ fn expr_bp_inner(p: &mut Parser<'_>, min_bp: u8, ctx: Ctx, role: Role) -> Option
         if kind == MINUS && p.nth_line_break_before(0) && !p.at_soft_break() && forgotten_comma(p) {
             break;
         }
-        // Special case 1: a second non-associative operator of the same level.
-        if let Some((level, right)) = non_assoc {
-            if level == bp && !chain_reported {
-                chained_non_associative(p, &lhs, right, bp);
-                chain_reported = true;
+        // Special case 1: a second non-associative operator of the same level. The chain is
+        // reported when it ends, so the fix can join every comparison in it.
+        let chained = non_assoc.filter(|&(level, _)| level == bp).map(|(_, middle)| middle);
+        if let Some(middle) = chained {
+            if chain.as_ref().is_some_and(|chain| chain.level != bp) {
+                chained_non_associative(p, chain.take());
             }
+            let chain = chain.get_or_insert_with(|| Chain {
+                level: bp,
+                first: lhs.done.span(),
+                op: p.nth_span(0),
+                middles: Vec::new(),
+                end: 0,
+            });
+            chain.middles.push(middle);
         }
         if !p.enter() {
             break;
@@ -299,6 +308,9 @@ fn expr_bp_inner(p: &mut Parser<'_>, min_bp: u8, ctx: Ctx, role: Role) -> Option
                 whole
             }
         };
+        if let (Some(chain), Some(_)) = (chain.as_mut(), chained) {
+            chain.end = lhs.done.end;
+        }
         non_assoc = match bp {
             BP_COMPARE | BP_IS | BP_RANGE => Some((bp, right.unwrap_or(lhs.done.span()))),
             _ => None,
@@ -309,7 +321,22 @@ fn expr_bp_inner(p: &mut Parser<'_>, min_bp: u8, ctx: Ctx, role: Role) -> Option
         }
     }
     p.set_depth(depth);
+    chained_non_associative(p, chain);
     Some(lhs)
+}
+
+/// A chain of non-associative operators of one level, such as `a < b < c < d`.
+#[derive(Debug)]
+struct Chain {
+    level: u8,
+    /// The first operation: `a < b`.
+    first: Span,
+    /// The second operator, where the chain goes wrong.
+    op: Span,
+    /// The operands that end one operation and start the next: `b`, `c`.
+    middles: Vec<Span>,
+    /// The end of the whole chain.
+    end: u32,
 }
 
 /// A binary operator and its right operand. Returns the new node and the right operand's span.
@@ -343,35 +370,60 @@ fn binary_rest(
     (whole, rhs.map(|rhs| rhs.done.span()))
 }
 
+/// Reports a chain of comparisons, ranges or `is` (special case 1), once for the whole chain.
 #[cold]
-fn chained_non_associative(p: &mut Parser<'_>, lhs: &Expr, right: Span, bp: u8) {
+fn chained_non_associative(p: &mut Parser<'_>, chain: Option<Chain>) {
+    let Some(Chain { level, first, op, middles, end }) = chain else { return };
     if p.speculating() {
         return;
     }
-    let op = p.nth_span(0);
-    let diagnostic = if bp == BP_COMPARE {
-        let middle = p.text_of(right).to_string();
+    let diagnostic = if level == BP_COMPARE {
+        // `a < b < c` becomes `a < b and b < c`: each middle operand is repeated after `and`.
+        let edits: Vec<Edit> = middles
+            .iter()
+            .map(|&middle| Edit {
+                span: Span::at(middle.end),
+                replacement: format!(" and {}", p.text_of(middle)),
+            })
+            .collect();
+        let mut fixed = String::new();
+        let mut cursor = first.start;
+        for edit in &edits {
+            fixed.push_str(p.text_of(Span::new(cursor, edit.span.start)));
+            fixed.push_str(&edit.replacement);
+            cursor = edit.span.start;
+        }
+        fixed.push_str(p.text_of(Span::new(cursor, end.max(cursor))));
+        let help = if fixed.len() <= 60 && !fixed.contains('\n') {
+            format!("compare twice and join the comparisons with `and`: `{fixed}`")
+        } else {
+            "compare twice and join the comparisons with `and`".to_string()
+        };
         Diagnostic::error("comparisons can't be chained")
             .with_code(codes::CHAINED_COMPARISON)
             .primary(op, "a second comparison")
-            .secondary(lhs.done.span(), "this is already a comparison")
-            .suggest(
-                format!(
-                    "compare twice and join the comparisons with `and`: `... and {middle} ...`"
-                ),
-                Span::at(right.end),
-                format!(" and {middle}"),
-            )
+            .secondary(first, "this is already a comparison")
+            .note("a comparison gives `true` or `false`, so a second one would compare that")
+            .suggest_edits(help, edits)
     } else {
-        let what = if bp == BP_RANGE { "ranges can't be chained" } else { "`is` can't be chained" };
+        let what =
+            if level == BP_RANGE { "ranges can't be chained" } else { "`is` can't be chained" };
         Diagnostic::error(what)
             .with_code(codes::CHAINED_RANGE_OR_IS)
             .primary(op, "a second operator of the same kind")
-            .secondary(lhs.done.span(), "this comes first")
-            .suggest_edits(
-                "wrap one side in parentheses",
-                wrap_in_parens(lhs.done.start, lhs.done.end),
-            )
+            .secondary(first, "this comes first")
+            .suggest_edits("wrap one side in parentheses", {
+                // `a..<b..<c` becomes `(a..<b)..<c`; a longer chain gets one pair per step.
+                let mut edits = vec![Edit {
+                    span: Span::at(first.start),
+                    replacement: "(".repeat(middles.len()),
+                }];
+                edits.extend(middles.iter().map(|middle| Edit {
+                    span: Span::at(middle.end),
+                    replacement: ")".to_string(),
+                }));
+                edits
+            })
     };
     p.push_error(diagnostic);
 }

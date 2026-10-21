@@ -33,3 +33,4 @@ Every example in `examples/` must keep parsing with zero errors once the parser 
 
 - Work on `main` unless told otherwise; push to `https://github.com/bean328/Quell.git`.
 - Commit messages: a short summary line, then what changed and why.
+- Never add `Co-Authored-By` lines or any other AI attribution to commits.

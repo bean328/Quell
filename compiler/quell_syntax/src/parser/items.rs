@@ -898,17 +898,17 @@ fn unnamed_option_fields(p: &mut Parser<'_>, unnamed: &[Span]) {
         })
         .collect::<Vec<_>>();
     let example = format!("{}{}", edits[0].replacement, p.text_of(first));
-    let (message, label) = if unnamed.len() == 1 {
-        ("this field of an enum option needs a name", "this field has a type but no name")
+    let message = if unnamed.len() == 1 {
+        "this field of an enum option needs a name"
     } else {
-        ("these fields of an enum option need names", "these fields have a type but no name")
+        "these fields of an enum option need names"
     };
     let mut diagnostic = Diagnostic::error(message)
         .with_code(codes::UNNAMED_OPTION_FIELD)
-        .primary(first.to(*unnamed.last().unwrap_or(&first)), label)
+        .primary(first, "this field has a type but no name")
         .note("options are built and matched by field name, as in `Circle(radius: 1.0)`");
     for &other in &unnamed[1..] {
-        diagnostic = diagnostic.secondary(other, "no name");
+        diagnostic = diagnostic.secondary(other, "and this one");
     }
     p.push_error(diagnostic.suggest_edits(format!("name each field, for example `{example}`"), edits));
 }
