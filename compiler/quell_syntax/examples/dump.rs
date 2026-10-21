@@ -55,9 +55,7 @@ fn sexp(node: &quell_syntax::SyntaxNode) -> String {
                     continue;
                 }
                 out.push(' ');
-                out.push_str(
-                    &format!("{:?}", t.text()).replace("\"", "'").trim_matches('\'').to_string(),
-                );
+                out.push_str(format!("{:?}", t.text()).replace("\"", "'").trim_matches('\''));
             }
             _ => {}
         }
