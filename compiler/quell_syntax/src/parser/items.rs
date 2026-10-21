@@ -4,6 +4,7 @@ use quell_diagnostics::{Diagnostic, Edit, Span};
 
 use super::exprs;
 use super::fixes::{Case, field_name_for_type, indentation_at};
+use super::habits;
 use super::stmts;
 use super::types::{self, MutRule};
 use super::{Bracket, Ctx, Parser, codes};
@@ -45,7 +46,12 @@ pub(crate) fn at_item_start(p: &Parser<'_>, top: bool) -> bool {
         | EXTEND_KW | IMPORT_KW => true,
         MUT_KW => top || p.nth(1) == FN_KW,
         LET_KW | VAR_KW => top,
-        LOWER_IDENT => p.nth_text(0) == "test" && p.nth(1) == STRING_START,
+        LOWER_IDENT if p.nth_text(0) == "test" && p.nth(1) == STRING_START => true,
+        LOWER_IDENT => match habits::foreign_keyword(p) {
+            Some(LET_KW) => top,
+            Some(_) => true,
+            None => habits::at_from_import(p),
+        },
         _ => false,
     }
 }
@@ -64,8 +70,15 @@ pub(crate) fn item(p: &mut Parser<'_>, container: Container) -> SyntaxKind {
     attributes(p);
     let mods = modifiers(p);
     let keyword = p.nth_span(0);
+    let foreign = habits::foreign_keyword(p);
     let kind = match p.current() {
-        FN_KW => {
+        LOWER_IDENT if habits::at_from_import(p) && foreign.is_none() => {
+            no_modifier(p, mods);
+            not_public(p, mods, "`import`");
+            habits::from_import(p);
+            IMPORT_DECL
+        }
+        FN_KW | LOWER_IDENT if p.at(FN_KW) || foreign == Some(FN_KW) => {
             if let Some((kind @ (MUT_KW | STATIC_KW), span)) = mods.modifier {
                 modifier_outside_type(p, kind, span);
             }
@@ -73,6 +86,10 @@ pub(crate) fn item(p: &mut Parser<'_>, container: Container) -> SyntaxKind {
             FN_DECL
         }
         LET_KW | VAR_KW => {
+            global_let(p, mods);
+            GLOBAL_LET
+        }
+        LOWER_IDENT if foreign == Some(LET_KW) => {
             global_let(p, mods);
             GLOBAL_LET
         }
@@ -86,17 +103,22 @@ pub(crate) fn item(p: &mut Parser<'_>, container: Container) -> SyntaxKind {
             struct_decl(p);
             STRUCT_DECL
         }
+        LOWER_IDENT if foreign == Some(STRUCT_KW) => {
+            no_modifier(p, mods);
+            struct_decl(p);
+            STRUCT_DECL
+        }
         ENUM_KW => {
             no_modifier(p, mods);
             enum_decl(p);
             ENUM_DECL
         }
-        TRAIT_KW => {
+        TRAIT_KW | LOWER_IDENT if p.at(TRAIT_KW) || foreign == Some(TRAIT_KW) => {
             no_modifier(p, mods);
             trait_decl(p);
             TRAIT_DECL
         }
-        EXTEND_KW => {
+        EXTEND_KW | LOWER_IDENT if p.at(EXTEND_KW) || foreign == Some(EXTEND_KW) => {
             no_modifier(p, mods);
             not_public(p, mods, "`extend`");
             extend_decl(p);
@@ -317,7 +339,7 @@ fn item_in_block(p: &mut Parser<'_>, span: Span, kind: SyntaxKind) {
 
 /// The rest of `FnDecl`, from `fn`.
 pub(crate) fn fn_rest(p: &mut Parser<'_>, container: Container) {
-    p.bump(); // `fn`
+    keyword(p, FN_KW);
     let what = if container.is_type() { "method names" } else { "function names" };
     declared_name(p, Case::Lower, what, "a function name");
     if p.at(LT) {
@@ -346,6 +368,16 @@ pub(crate) fn fn_rest(p: &mut Parser<'_>, container: Container) {
     fn_body(p, container);
 }
 
+/// The keyword that starts a declaration, or a word from another language that stands for it,
+/// which is reported and read as the keyword (see `habits.rs`).
+fn keyword(p: &mut Parser<'_>, kind: SyntaxKind) {
+    if p.at(kind) {
+        p.bump();
+    } else {
+        habits::foreign_word(p, kind);
+    }
+}
+
 /// `FnBody = "=" Expr | Block`, required except in a trait.
 fn fn_body(p: &mut Parser<'_>, container: Container) {
     if p.eat(EQ) {
@@ -356,10 +388,17 @@ fn fn_body(p: &mut Parser<'_>, container: Container) {
         stmts::block(p);
         return;
     }
-    if container == Container::Trait {
+    if habits::colon_block(p, "the function's signature").is_some() {
+        return;
+    }
+    if container == Container::Trait && !p.at(COLON) {
         return;
     }
     if p.speculating() {
+        return;
+    }
+    if p.at(COLON) {
+        habits::colon_instead_of_brace(p);
         return;
     }
     let at = Span::at(p.last_end());
@@ -415,6 +454,12 @@ fn param_list(p: &mut Parser<'_>) {
 }
 
 fn param(p: &mut Parser<'_>) -> bool {
+    if p.at(SELF_KW) {
+        let before = p.last_token_span();
+        let before_kind = p.last_kind();
+        habits::self_parameter(p, before, before_kind);
+        return true;
+    }
     if !(p.current().is_ident() || p.current().is_keyword()) {
         p.error_expected(
             codes::EXPECTED_NAME,
@@ -455,7 +500,7 @@ fn param(p: &mut Parser<'_>) -> bool {
 // ----------------------------------------------------------------------
 
 fn struct_decl(p: &mut Parser<'_>) {
-    p.bump();
+    keyword(p, STRUCT_KW);
     declared_name(p, Case::Upper, "struct names", "the struct's name");
     if p.at(LT) {
         types::generic_param_list(p);
@@ -475,7 +520,7 @@ fn enum_decl(p: &mut Parser<'_>) {
 }
 
 fn trait_decl(p: &mut Parser<'_>) {
-    p.bump();
+    keyword(p, TRAIT_KW);
     declared_name(p, Case::Upper, "trait names", "the trait's name");
     if p.at(LT) {
         types::generic_param_list(p);
@@ -484,7 +529,7 @@ fn trait_decl(p: &mut Parser<'_>) {
 }
 
 fn extend_decl(p: &mut Parser<'_>) {
-    p.bump();
+    keyword(p, EXTEND_KW);
     if p.current().is_ident() {
         types::type_path(p);
     } else {
@@ -500,7 +545,8 @@ fn extend_decl(p: &mut Parser<'_>) {
 
 /// `Conformance = ":" TypePath { "and" TypePath }`.
 fn conformance(p: &mut Parser<'_>) {
-    if !p.at(COLON) {
+    // A `:` at the end of the line starts a block written the Python way (`habits.rs`).
+    if !p.at(COLON) || matches!(p.nth(1), NEWLINE | EOF) {
         return;
     }
     let marker = p.start();
@@ -526,7 +572,8 @@ fn conformance(p: &mut Parser<'_>) {
 /// The `{ }` body of a struct, enum, trait or extend, with members separated by line breaks
 /// (and commas after fields and options).
 fn member_list(p: &mut Parser<'_>, container: Container, after: &str) {
-    if !p.at_body_brace(after) {
+    let colon = !p.at_body_brace(after) && habits::colon_members(p, after);
+    if !colon && !p.at(L_BRACE) {
         if !p.speculating() {
             if let Some(diagnostic) = p.expected(codes::EXPECTED_TOKEN, "`{`") {
                 let at = Span::at(p.last_end());
@@ -582,7 +629,9 @@ fn member_list(p: &mut Parser<'_>, container: Container, after: &str) {
         p.skip_to_safe_point();
     }
     p.bracket = saved;
-    p.close_bracket(open, "the body");
+    if !colon {
+        p.close_bracket(open, "the body");
+    }
     p.complete(marker, MEMBER_LIST);
 }
 
@@ -636,8 +685,9 @@ fn member(p: &mut Parser<'_>, container: Container) -> SyntaxKind {
     let marker = p.start();
     attributes(p);
     let mods = modifiers(p);
+    let foreign_fn = habits::foreign_keyword(p) == Some(FN_KW);
     let kind = match p.current() {
-        FN_KW => {
+        FN_KW | LOWER_IDENT if p.at(FN_KW) || foreign_fn => {
             if container == Container::Trait {
                 if let Some(span) = mods.public {
                     pub_not_allowed(

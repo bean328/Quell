@@ -4,6 +4,7 @@ use quell_diagnostics::{Diagnostic, Span};
 
 use super::exprs::{self, Expr};
 use super::fixes::{indentation_at, wrap_in_parens};
+use super::habits;
 use super::items::{self, Container, with_space_after};
 use super::patterns;
 use super::types::{self, MutRule};
@@ -77,7 +78,14 @@ pub(crate) fn body_block(
     if p.at_body_brace(after) {
         return block(p);
     }
+    if let Some(block) = habits::colon_block(p, after) {
+        return Some(block);
+    }
     if p.speculating() {
+        return None;
+    }
+    if p.at(COLON) {
+        habits::colon_instead_of_brace(p);
         return None;
     }
     if let Some(name) = header.and_then(|header| header.catch_name) {
@@ -296,6 +304,10 @@ fn statement(p: &mut Parser<'_>, top: bool) -> Option<StmtInfo> {
             let_rest(p);
             LET_STMT
         }
+        LOWER_IDENT if habits::foreign_keyword(p) == Some(LET_KW) => {
+            let_rest(p);
+            LET_STMT
+        }
         FOR_KW => {
             for_stmt(p);
             FOR_STMT
@@ -476,7 +488,17 @@ fn statement_in_library(p: &mut Parser<'_>, span: Span) {
 /// The rest of `LetStmt` or `GlobalLet`, from `let` or `var`:
 /// `BindingPattern [ ":" Type ] "=" Expr`.
 pub(crate) fn let_rest(p: &mut Parser<'_>) {
-    p.bump(); // `let` or `var`
+    let keyword = p.nth_span(0);
+    let is_var = p.at(VAR_KW);
+    if p.at(LET_KW) || is_var {
+        p.bump();
+    } else {
+        // `const` (see `habits.rs`).
+        habits::foreign_word(p, LET_KW);
+    }
+    if p.at(MUT_KW) {
+        habits::let_mut(p, keyword, is_var);
+    }
     let pattern = patterns::binding_pattern(p);
     let mut ty = None;
     if p.eat(COLON) {

@@ -197,16 +197,7 @@ pub(crate) fn colon_block(p: &mut Parser<'_>, after: &str) -> Option<BlockInfo> 
     if !p.enter() {
         return None;
     }
-    if !p.speculating() {
-        let edits = layout::colon_block_fix(p.text(), p.toks(), colon, last, stop);
-        p.push_error(
-            Diagnostic::error("Quell puts a block in `{ }`, not after `:`")
-                .with_code(codes::COLON_BLOCK)
-                .primary(p.nth_span(0), format!("the block after {after} starts here"))
-                .note("indentation has no meaning in Quell: `{` and `}` show where a block starts and ends")
-                .suggest_edits("write the block in `{ }`", edits),
-        );
-    }
+    report_colon_block(p, after, colon, last, stop);
     p.set_list_end(colon, stop);
     let marker = p.start();
     p.bump(); // `:`
@@ -216,6 +207,39 @@ pub(crate) fn colon_block(p: &mut Parser<'_>, after: &str) -> Option<BlockInfo> 
     p.bracket = saved;
     p.leave();
     Some(BlockInfo { done: p.complete(marker, BLOCK), only_jump })
+}
+
+/// Like [`colon_block`], for the body of a `struct`, `enum`, `trait` or `extend` written with
+/// `:` and indented lines, as in Python's `class Point:`. Reports it and gives the `:` a list
+/// end; the caller reads the members. Returns whether there is such a body here.
+pub(crate) fn colon_members(p: &mut Parser<'_>, after: &str) -> bool {
+    if !p.at(COLON) {
+        return false;
+    }
+    let colon = p.pos();
+    let Some((stop, last)) = layout::indented_block_end(p.toks(), p.text(), colon) else {
+        return false;
+    };
+    report_colon_block(p, after, colon, last, stop);
+    p.set_list_end(colon, stop);
+    true
+}
+
+fn report_colon_block(p: &mut Parser<'_>, after: &str, colon: usize, last: usize, stop: usize) {
+    if p.speculating() {
+        return;
+    }
+    let edits = layout::colon_block_fix(p.text(), p.toks(), colon, last, stop);
+    p.push_error(
+        Diagnostic::error("Quell puts a block in `{ }`, not after `:`")
+            .with_code(codes::COLON_BLOCK)
+            .primary(p.nth_span(0), format!("the block after {after} starts here"))
+            .note(
+                "indentation has no meaning in Quell: `{` and `}` show where a block starts and \
+                 ends",
+            )
+            .suggest_edits("write the block in `{ }`", edits),
+    );
 }
 
 /// The fix for a `:` where a body should start with no indented block after it.

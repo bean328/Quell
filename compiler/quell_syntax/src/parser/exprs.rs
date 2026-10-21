@@ -7,6 +7,7 @@
 use quell_diagnostics::{Diagnostic, Edit, Span};
 
 use super::fixes::{Case, wrap_in_parens};
+use super::habits;
 use super::items::with_space_after;
 use super::stmts;
 use super::types::{self, MutRule};
@@ -123,7 +124,7 @@ pub(crate) struct Expr {
 }
 
 impl Expr {
-    fn new(done: Done) -> Expr {
+    pub(crate) fn new(done: Done) -> Expr {
         Expr { done, place: false, catch_name: None }
     }
 }
@@ -263,6 +264,10 @@ fn expr_bp_inner(p: &mut Parser<'_>, min_bp: u8, ctx: Ctx, role: Role) -> Option
         if kind == QUESTION_QUESTION && p.nth(1) == EQ {
             break; // `??=`, reported by the statement
         }
+        if kind == IF_KW && min_bp == 0 && !ctx.header && habits::at_python_conditional(p) {
+            lhs = habits::python_conditional(p, lhs);
+            continue;
+        }
         let Some(bp) = infix_bp(kind) else { break };
         if bp < min_bp {
             break;
@@ -315,6 +320,9 @@ fn binary_rest(
     let marker = lhs.done.precede(p);
     let range = matches!(kind, DOT_DOT_LT | DOT_DOT_EQ);
     p.bump();
+    if habits::at_triple_equals(p) {
+        habits::triple_equals(p);
+    }
     if matches!(kind, GT | GT_GT) && p.at(NEWLINE) {
         // lexical.md, 12.5: a line that ends with a comparison or shift continues.
         p.bump();
@@ -1490,6 +1498,12 @@ fn spaces_after(p: &Parser<'_>, offset: u32) -> u32 {
 /// MatchExpr | ParallelFor | GroupExpr | UnsafeExpr`. Returns `None`, after reporting, when no
 /// expression starts here; nothing is consumed then.
 fn primary(p: &mut Parser<'_>) -> Option<Expr> {
+    if habits::at_string_prefix(p) {
+        return Some(habits::string_prefix(p));
+    }
+    if habits::at_new(p) {
+        habits::new_keyword(p);
+    }
     let kind = p.current();
     if matches!(kind, STRING_START | L_PAREN | L_BRACK | IF_KW | MATCH_KW) {
         // Brackets and the keyword constructs count as a level of nesting of their own (a
@@ -1718,6 +1732,12 @@ fn list_and_map_mixed(p: &mut Parser<'_>, at: Span, element: Span, is_entry: boo
 fn if_expr(p: &mut Parser<'_>) -> Expr {
     let marker = p.start();
     p.bump();
+    if_rest(p);
+    Expr::new(p.complete(marker, IF_EXPR))
+}
+
+/// The rest of an `if`, after the keyword: the condition, the block and the `else` branch.
+fn if_rest(p: &mut Parser<'_>) {
     if matches!(p.current(), LET_KW | VAR_KW) {
         if_let(p);
     } else {
@@ -1734,8 +1754,14 @@ fn if_expr(p: &mut Parser<'_>) -> Expr {
         } else {
             stmts::body_block(p, "`else`", None);
         }
+    } else if habits::at_else_if_word(p) && p.enter() {
+        // `elif` (see `habits.rs`): read as `else if`.
+        habits::else_if_word(p);
+        let inner = p.start();
+        if_rest(p);
+        p.complete(inner, IF_EXPR);
+        p.leave();
     }
-    Expr::new(p.complete(marker, IF_EXPR))
 }
 
 /// `if let x = maybe { ... }` (grammar.md, 11): reported, and read as `if maybe != none`.
