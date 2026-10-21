@@ -197,7 +197,7 @@ pub(crate) fn colon_block(p: &mut Parser<'_>, after: &str) -> Option<BlockInfo> 
     if !p.enter() {
         return None;
     }
-    report_colon_block(p, after, colon, last, stop);
+    report_colon_block(p, after, colon, last);
     p.set_list_end(colon, stop);
     let marker = p.start();
     p.bump(); // `:`
@@ -220,16 +220,16 @@ pub(crate) fn colon_members(p: &mut Parser<'_>, after: &str) -> bool {
     let Some((stop, last)) = layout::indented_block_end(p.toks(), p.text(), colon) else {
         return false;
     };
-    report_colon_block(p, after, colon, last, stop);
+    report_colon_block(p, after, colon, last);
     p.set_list_end(colon, stop);
     true
 }
 
-fn report_colon_block(p: &mut Parser<'_>, after: &str, colon: usize, last: usize, stop: usize) {
+fn report_colon_block(p: &mut Parser<'_>, after: &str, colon: usize, last: usize) {
     if p.speculating() {
         return;
     }
-    let edits = layout::colon_block_fix(p.text(), p.toks(), colon, last, stop);
+    let edits = layout::colon_block_fix(p.text(), p.toks(), colon, last);
     p.push_error(
         Diagnostic::error("Quell puts a block in `{ }`, not after `:`")
             .with_code(codes::COLON_BLOCK)

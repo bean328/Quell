@@ -558,17 +558,30 @@ impl<'a> Scanner<'a> {
             self.open_string(start, after - start);
             return None;
         }
-        self.pos = after;
         let here = span(start, after);
-        let mut diagnostic = Diagnostic::error("`#` is only used for raw strings")
+        let diagnostic = Diagnostic::error("`#` is only used for raw strings")
             .with_code(codes::STRAY_HASH)
-            .primary(here, "this `#` doesn't start a raw string")
-            .note("a raw string looks like `#\"{\"a\": 1}\"#`")
-            .suggest("remove it", here, "");
-        if after - start == 1 && matches!(self.bytes.get(after), Some(b' ' | b'!')) {
-            diagnostic = diagnostic.suggest("to write a comment, use `//`", here, "//");
+            .primary(here, "this `#` doesn't start a raw string");
+        // `# text` or `#!` is a comment in Python and shell scripts. Outside a string, the rest
+        // of the line is skipped with the `#`, so its words are not read as code.
+        let comment = after - start == 1
+            && self.open_holes == 0
+            && matches!(self.bytes.get(after), None | Some(b' ' | b'\t' | b'!' | b'\n' | b'\r'));
+        if comment {
+            self.pos = self.line_comment_end(start);
+            self.report(
+                diagnostic
+                    .note("comments in Quell start with `//`")
+                    .suggest("to write a comment, use `//`", here, "//"),
+            );
+            return Some(ERROR);
         }
-        self.report(diagnostic);
+        self.pos = after;
+        self.report(
+            diagnostic
+                .note("a raw string looks like `#\"{\"a\": 1}\"#`")
+                .suggest("remove it", here, ""),
+        );
         Some(ERROR)
     }
 
@@ -1637,6 +1650,24 @@ impl<'a> Scanner<'a> {
             );
             return;
         }
+        if let Some(closer) = self.swallowed_closer(&s, at) {
+            // Read the string as ending before the `)`, so that bracket is closed as intended.
+            self.push(STRING_END, closer);
+            self.pos = closer;
+            let bracket = if self.bytes[closer] == b')' { ")" } else { "]" };
+            let quote = Self::closer_text(&s);
+            self.report(
+                Diagnostic::error("this string is never closed")
+                    .with_code(codes::UNCLOSED_STRING)
+                    .primary(opening, format!("the line ends before the closing `{quote}`"))
+                    .secondary(
+                        span(closer, closer + 1),
+                        format!("this `{bracket}` is most likely meant to close the bracket before the string"),
+                    )
+                    .suggest(format!("add `{quote}` before the `{bracket}`"), span(closer, closer), quote),
+            );
+            return;
+        }
         self.push(STRING_END, at);
         let note = if s.raw() {
             "a raw string on one line can't hold a line break; for several lines, start it with `#\"\"\"` on a line of its own"
@@ -1662,6 +1693,43 @@ impl<'a> Scanner<'a> {
         } else {
             diagnostic.suggest(format!("add `{closer}` where the text ends"), span(at, at), closer)
         });
+    }
+
+    /// For a one-line string that is never closed, as in `print("hello)`: the `)` or `]` in its
+    /// text that most likely closes a bracket opened before the string on the same line. It
+    /// must be followed only by closers and spaces up to the end of the line, and the string
+    /// must end with plain text that holds more than that closer.
+    fn swallowed_closer(&mut self, s: &StrState, at: usize) -> Option<usize> {
+        let last = *self.tokens.last()?;
+        if last.kind != STRING_TEXT {
+            return None;
+        }
+        let text_start = last.start as usize;
+        let tail = self.bytes[text_start..at]
+            .iter()
+            .rev()
+            .take_while(|&&b| matches!(b, b')' | b']' | b' ' | b'\t'))
+            .count();
+        let closer = (at - tail..at).find(|&index| matches!(self.bytes[index], b')' | b']'))?;
+        if closer == text_start {
+            return None;
+        }
+        // The innermost bracket opened before the string on its line and not closed there.
+        let line_start = self.line_start(s.open);
+        let mut depth = 0usize;
+        for token in self.tokens[..s.start_token].iter().rev() {
+            if (token.start as usize) < line_start {
+                break;
+            }
+            match token.kind {
+                R_PAREN | R_BRACK => depth += 1,
+                L_PAREN | L_BRACK if depth > 0 => depth -= 1,
+                L_PAREN => return (self.bytes[closer] == b')').then_some(closer),
+                L_BRACK => return (self.bytes[closer] == b']').then_some(closer),
+                _ => {}
+            }
+        }
+        None
     }
 
     // ------------------------------------------------------------------

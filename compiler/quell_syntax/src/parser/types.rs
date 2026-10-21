@@ -47,7 +47,10 @@ fn type_inner(p: &mut Parser<'_>, rule: MutRule) -> Option<Done> {
         p.bump();
         let done = p.complete(marker, OPTIONAL_TYPE);
         if matches!(p.current(), QUESTION | QUESTION_QUESTION) && !p.nth_line_break_before(0) {
-            optional_twice(p, p.nth_span(0), "");
+            // Remove the spaces before the second `?` too.
+            let second = p.nth_span(0);
+            let removal = Span::new(p.last_end(), second.end);
+            optional_twice(p, second, removal, "");
             p.bump_error();
         }
         done
@@ -55,7 +58,7 @@ fn type_inner(p: &mut Parser<'_>, rule: MutRule) -> Option<Done> {
         // `String??` lexes as `??` (7.1).
         let marker = atom.precede(p);
         let span = p.nth_span(0);
-        optional_twice(p, span, "?");
+        optional_twice(p, span, span, "?");
         p.bump();
         p.complete(marker, OPTIONAL_TYPE)
     } else {
@@ -95,7 +98,7 @@ fn misplaced_mut(p: &mut Parser<'_>, mut_span: Span, rule: MutRule) {
 }
 
 #[cold]
-fn optional_twice(p: &mut Parser<'_>, span: Span, replacement: &str) {
+fn optional_twice(p: &mut Parser<'_>, span: Span, removal: Span, replacement: &str) {
     if p.speculating() {
         return;
     }
@@ -104,7 +107,7 @@ fn optional_twice(p: &mut Parser<'_>, span: Span, replacement: &str) {
             .with_code(codes::OPTIONAL_TWICE)
             .primary(span, "a second `?`")
             .note("a value is either there or missing; a second `?` adds nothing")
-            .suggest("write one `?`", span, replacement.to_string()),
+            .suggest("write one `?`", removal, replacement.to_string()),
     );
 }
 

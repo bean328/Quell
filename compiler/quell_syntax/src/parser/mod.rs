@@ -143,7 +143,7 @@ fn better_closing_fix(
             let ends_line = toks.get(pos + 1).is_some_and(|next| next.line_break_before);
             if ends_line {
                 let indent = fixes::indentation_at(text, open);
-                layout::closing_line(text, end, text.len() as u32, indent)
+                layout::closing_line(text, end, indent)
             } else {
                 Edit { span: Span::at(end), replacement: " }".to_string() }
             }
@@ -298,6 +298,12 @@ pub(crate) struct Parser<'t> {
     /// The start of the innermost full expression, for the fix of the warning about a line
     /// that starts with `.` (grammar.md, 10.17).
     pub(crate) expr_start: u32,
+    /// The start of the expression of the expression statement being read, or [`NONE`].
+    pub(crate) stmt_start: u32,
+    /// A position where a statement ends although the line break before it was removed: after
+    /// `count++` at the end of a line, where the `+` would otherwise continue the line
+    /// (grammar.md, 11).
+    line_end_at: usize,
     /// For each bracket that is never closed: where it starts and where its construct ended.
     unclosed: Vec<(u32, u32)>,
     /// The braces that the indentation shows are never closed ([`layout::repair_braces`]).
@@ -363,6 +369,8 @@ impl<'t> Parser<'t> {
             speculating: 0,
             comma_forgiven: usize::MAX,
             expr_start: 0,
+            stmt_start: NONE,
+            line_end_at: usize::MAX,
             unclosed: Vec::new(),
             repaired,
         }
@@ -506,6 +514,20 @@ impl<'t> Parser<'t> {
             (NONE, NONE) => None,
             (NONE, end) => Some(end as usize),
             (partner, _) => Some(partner as usize),
+        }
+    }
+
+    /// Whether a statement ends before the current token although no `NEWLINE` is there (see
+    /// [`Parser::end_line_here`]).
+    pub(crate) fn at_fixed_line_end(&self) -> bool {
+        self.pos == self.line_end_at
+    }
+
+    /// Makes the line break before the current token end the statement, as if it were a
+    /// `NEWLINE`. Used after a reported `count++` at the end of a line.
+    pub(crate) fn end_line_here(&mut self) {
+        if self.speculating == 0 && self.nth_line_break_before(0) {
+            self.line_end_at = self.pos;
         }
     }
 

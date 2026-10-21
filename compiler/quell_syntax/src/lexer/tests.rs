@@ -1052,9 +1052,25 @@ fn recovery() {
     assert_eq!(toks("$x + `y"), "LOWER_IDENT(x) + LOWER_IDENT(y)");
     // An unclosed string ends at the end of its line.
     assert_eq!(
-        toks("print(\"oops)\nnext()"),
-        r#"LOWER_IDENT(print) ( STRING_START(") STRING_TEXT(oops)) STRING_END() LOWER_IDENT(next) ( )"#
+        toks("x = \"oops\nnext()"),
+        r#"LOWER_IDENT(x) = STRING_START(") STRING_TEXT(oops) STRING_END() NEWLINE(\n) LOWER_IDENT(next) ( )"#
     );
+    // When its text ends with a `)` that closes a `(` from before the string on the same line,
+    // it ends before that `)`, which then closes the call.
+    assert_eq!(
+        toks("print(\"oops)\nnext()"),
+        r#"LOWER_IDENT(print) ( STRING_START(") STRING_TEXT(oops) STRING_END() ) NEWLINE(\n) LOWER_IDENT(next) ( )"#
+    );
+    assert_eq!(
+        toks("[1, \"x] ]"),
+        r#"[ INT(1) , STRING_START(") STRING_TEXT(x) STRING_END() ] ]"#
+    );
+    // Not when the `)` is followed by more code, or is the whole text.
+    assert_eq!(
+        toks("f(\"a) + b"),
+        r#"LOWER_IDENT(f) ( STRING_START(") STRING_TEXT(a) + b) STRING_END()"#
+    );
+    assert_eq!(toks("f(\")"), r#"LOWER_IDENT(f) ( STRING_START(") STRING_TEXT()) STRING_END()"#);
     // A hole that is never closed is read again as text, so the string and the call still end
     // where they appear to (spec 9.3).
     assert_eq!(

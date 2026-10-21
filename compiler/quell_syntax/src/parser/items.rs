@@ -322,6 +322,7 @@ fn item_in_block(p: &mut Parser<'_>, span: Span, kind: SyntaxKind) {
         IMPORT_DECL => "an import",
         TEST_DECL => "a test",
         COMPTIME_BLOCK => "a `comptime` block",
+        GLOBAL_LET => "a `comptime let`",
         _ => "this",
     };
     p.push_error(
@@ -468,6 +469,12 @@ fn param(p: &mut Parser<'_>) -> bool {
         );
         return false;
     }
+    if at_type_before_name(p, &[COMMA, R_PAREN, EQ]) {
+        let marker = p.start();
+        type_before_name(p);
+        p.complete(marker, PARAM);
+        return true;
+    }
     let marker = p.start();
     let name = p.nth_span(0);
     let is_keyword = p.current().is_keyword();
@@ -477,7 +484,7 @@ fn param(p: &mut Parser<'_>) -> bool {
         p.bump();
     }
     let mut holds_type = false;
-    if p.eat(COLON) {
+    if p.eat(COLON) || type_without_colon(p) {
         let ty = types::type_(p, MutRule::Allowed);
         holds_type = ty.is_some_and(|ty| ty.kind == TYPE_TYPE);
     }
@@ -666,7 +673,7 @@ fn missing_member_separator(p: &mut Parser<'_>, previous: SyntaxKind) {
         return;
     }
     let span = p.nth_span(0);
-    let between = Span::new(p.last_end(), span.start);
+    let between = stmts::spaces_before(p, span.start);
     let diagnostic = Diagnostic::error("two members on one line need a separator")
         .with_code(codes::MISSING_SEPARATOR)
         .primary(span, "this member starts on the same line as the one before it");
@@ -763,8 +770,12 @@ fn field_not_allowed(p: &mut Parser<'_>, container: Container) {
 
 /// `Field = LOWER_IDENT ":" Type [ "=" Expr ]`.
 fn field(p: &mut Parser<'_>) {
+    if at_type_before_name(p, &[COMMA, NEWLINE, R_BRACE, EQ, EOF]) {
+        type_before_name(p);
+        return;
+    }
     declared_name(p, Case::Lower, "field names", "a field name");
-    if p.eat(COLON) {
+    if p.eat(COLON) || type_without_colon(p) {
         types::type_(p, MutRule::Forbidden);
     } else if let Some(diagnostic) = p.expected(codes::EXPECTED_TOKEN, "`:` and the field's type") {
         let at = Span::at(p.last_end());
@@ -777,6 +788,61 @@ fn field(p: &mut Parser<'_>) {
     if p.eat(EQ) {
         exprs::expr(p, Ctx::default());
     }
+}
+
+/// Whether the current token is a type name followed by a lowercase name and then one of
+/// `ends`, as in `Int amount` (the order of C, Java and C#).
+fn at_type_before_name(p: &Parser<'_>, ends: &[SyntaxKind]) -> bool {
+    p.at(UPPER_IDENT)
+        && p.nth(1) == LOWER_IDENT
+        && !p.nth_line_break_before(1)
+        && ends.contains(&p.nth(2))
+}
+
+/// `Int amount`: reported, with the fix `amount: Int`. The type goes into an error node, then
+/// come the name and any default value.
+fn type_before_name(p: &mut Parser<'_>) {
+    let ty = p.nth_span(0);
+    let name = p.nth_span(1);
+    p.bump_error();
+    p.bump();
+    if p.eat(EQ) {
+        exprs::expr(p, Ctx::default());
+    }
+    if p.speculating() {
+        return;
+    }
+    let ty_text = p.text_of(ty).to_string();
+    let name_text = p.text_of(name).to_string();
+    p.push_error(
+        Diagnostic::error("Quell writes the name before the type")
+            .with_code(codes::TYPE_BEFORE_NAME)
+            .primary(ty, "the type comes first here")
+            .note("a name and its type are written `name: Type`, as in `amount: Int`")
+            .suggest(
+                format!("write `{name_text}: {ty_text}`"),
+                ty.to(name),
+                format!("{name_text}: {ty_text}"),
+            ),
+    );
+}
+
+/// After a declared name, a type on the same line with no `:` before it, as in `amount Int`
+/// (from Go). Reports the missing `:` with a fix that adds it, and returns whether a type
+/// follows, so the caller reads it.
+pub(crate) fn type_without_colon(p: &mut Parser<'_>) -> bool {
+    if !p.current().is_ident() || p.nth_line_break_before(0) {
+        return false;
+    }
+    let ends = matches!(p.nth(1), COMMA | R_PAREN | R_BRACE | EQ | QUESTION | LT | NEWLINE | EOF);
+    if !(p.at(UPPER_IDENT) || ends) {
+        return false;
+    }
+    if let Some(diagnostic) = p.expected(codes::EXPECTED_TOKEN, "`:` before the type") {
+        let at = Span::at(p.last_end());
+        p.push_error(diagnostic.suggest("add `:`", at, ":"));
+    }
+    true
 }
 
 /// `EnumOption = UPPER_IDENT [ "(" OptionField { "," OptionField } [ "," ] ")" ]`.
@@ -802,14 +868,54 @@ fn enum_option(p: &mut Parser<'_>) {
     }
     let saved = p.bracket;
     p.bracket = Bracket::Other;
-    exprs::delimited(p, open, "an option field", option_field);
+    let mut unnamed = Vec::new();
+    exprs::delimited(p, open, "an option field", |p| option_field(p, &mut unnamed));
     p.bracket = saved;
     p.close_bracket(open, "the option's fields");
     p.complete(marker, OPTION_FIELD_LIST);
+    unnamed_option_fields(p, &unnamed);
 }
 
-/// `OptionField = LOWER_IDENT ":" Type`.
-fn option_field(p: &mut Parser<'_>) -> bool {
+/// One error for all the fields of an option that have a type but no name (3.6), with a fix
+/// that names each one after its type.
+#[cold]
+fn unnamed_option_fields(p: &mut Parser<'_>, unnamed: &[Span]) {
+    let (Some(&first), false) = (unnamed.first(), p.speculating()) else { return };
+    let mut used = Vec::new();
+    let edits = unnamed
+        .iter()
+        .map(|&ty| {
+            let base = field_name_for_type(p.text_of(ty));
+            // `Pair(Int, Int)` gets `int` and `int2`.
+            let mut name = base.clone();
+            let mut number = 1;
+            while used.contains(&name) {
+                number += 1;
+                name = format!("{base}{number}");
+            }
+            used.push(name.clone());
+            Edit { span: Span::at(ty.start), replacement: format!("{name}: ") }
+        })
+        .collect::<Vec<_>>();
+    let example = format!("{}{}", edits[0].replacement, p.text_of(first));
+    let (message, label) = if unnamed.len() == 1 {
+        ("this field of an enum option needs a name", "this field has a type but no name")
+    } else {
+        ("these fields of an enum option need names", "these fields have a type but no name")
+    };
+    let mut diagnostic = Diagnostic::error(message)
+        .with_code(codes::UNNAMED_OPTION_FIELD)
+        .primary(first.to(*unnamed.last().unwrap_or(&first)), label)
+        .note("options are built and matched by field name, as in `Circle(radius: 1.0)`");
+    for &other in &unnamed[1..] {
+        diagnostic = diagnostic.secondary(other, "no name");
+    }
+    p.push_error(diagnostic.suggest_edits(format!("name each field, for example `{example}`"), edits));
+}
+
+/// `OptionField = LOWER_IDENT ":" Type`. A field with a type and no name is read, and its
+/// type's span is added to `unnamed`.
+fn option_field(p: &mut Parser<'_>, unnamed: &mut Vec<Span>) -> bool {
     let marker = p.start();
     if p.current().is_ident() && p.nth(1) == COLON {
         declared_name(p, Case::Lower, "field names", "a field name");
@@ -818,24 +924,9 @@ fn option_field(p: &mut Parser<'_>) -> bool {
         p.complete(marker, OPTION_FIELD);
         return true;
     }
-    let start = p.nth_span(0).start;
     match types::type_(p, MutRule::Forbidden) {
         Some(ty) => {
-            let type_text = p.text_of(ty.span()).to_string();
-            let name = field_name_for_type(&type_text);
-            if !p.speculating() {
-                p.push_error(
-                    Diagnostic::error("the fields of an enum option need names")
-                        .with_code(codes::UNNAMED_OPTION_FIELD)
-                        .primary(ty.span(), "this field has a type but no name")
-                        .note("options are built and matched by field name, as in `Circle(radius: 1.0)`")
-                        .suggest(
-                            format!("name this field, for example `{name}: {type_text}`"),
-                            Span::at(start),
-                            format!("{name}: "),
-                        ),
-                );
-            }
+            unnamed.push(ty.span());
             p.complete(marker, OPTION_FIELD);
             true
         }

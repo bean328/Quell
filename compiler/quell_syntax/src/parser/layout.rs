@@ -219,17 +219,16 @@ pub(crate) fn unclosed_brace_error(text: &str, toks: &[Tok], brace: UnclosedBrac
         // `{ code` with nothing after it on later lines: close it on the same line.
         Edit { span: Span::at(last_end), replacement: " }".to_string() }
     } else {
-        closing_line(text, last_end, end.start, indent)
+        closing_line(text, last_end, indent)
     };
     diagnostic.suggest_edits("add the missing `}` where the block ends", vec![edit])
 }
 
 /// The edit that adds a line holding `indent` and `}` after the line on which the code ending
 /// at `after` stands: at the start of the line break after it, past any comment on that line.
-/// `limit` is the start of the code that must come after the new line.
-pub(crate) fn closing_line(text: &str, after: u32, limit: u32, indent: &str) -> Edit {
+pub(crate) fn closing_line(text: &str, after: u32, indent: &str) -> Edit {
     let bytes = text.as_bytes();
-    let end = bytes.len().min(limit as usize);
+    let end = bytes.len();
     let mut at = after as usize;
     while at < end {
         match bytes[at] {
@@ -344,13 +343,7 @@ pub(crate) fn indented_block_end(toks: &[Tok], text: &str, colon: usize) -> Opti
 
 /// The fix for a block written with `:`: `{` instead of the `:`, and `}` after the block, on
 /// a line of its own when the block spans lines.
-pub(crate) fn colon_block_fix(
-    text: &str,
-    toks: &[Tok],
-    colon: usize,
-    last: usize,
-    stop: usize,
-) -> Vec<Edit> {
+pub(crate) fn colon_block_fix(text: &str, toks: &[Tok], colon: usize, last: usize) -> Vec<Edit> {
     let colon_tok = toks[colon];
     let last_tok = toks[last];
     // Remove spaces before the `:` too, as in `def f() :`.
@@ -361,9 +354,8 @@ pub(crate) fn colon_block_fix(
     if same_line && last != colon {
         edits.push(Edit { span: Span::at(last_tok.end), replacement: " }".to_string() });
     } else {
-        let limit = toks[stop.min(toks.len() - 1)].start.max(last_tok.end);
         let indent = indentation_at(text, colon_tok.start);
-        edits.push(closing_line(text, last_tok.end, limit, indent));
+        edits.push(closing_line(text, last_tok.end, indent));
     }
     edits
 }

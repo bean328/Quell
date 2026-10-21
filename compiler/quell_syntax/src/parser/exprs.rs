@@ -244,6 +244,9 @@ fn expr_bp_inner(p: &mut Parser<'_>, min_bp: u8, ctx: Ctx, role: Role) -> Option
     // One error for a whole chain such as `a < b < c < d`.
     let mut chain_reported = false;
     loop {
+        if p.at_fixed_line_end() {
+            break;
+        }
         let mut kind = p.current();
         if kind == QUESTION {
             if min_bp == 0 && ternary_ahead(p) {
@@ -597,7 +600,18 @@ fn catch_rest(p: &mut Parser<'_>, lhs: Expr, ctx: Ctx) -> Expr {
     }
     let marker = lhs.done.precede(p);
     p.bump(); // `catch`
-    let name_next = matches!(p.current(), LOWER_IDENT | UNDERSCORE);
+    // Outside a header, `catch Name {` can only be meant as the binding form with an uppercase
+    // name (a struct literal `catch Empty { x: 1 }` has its own error).
+    let upper_binding = !ctx.header
+        && p.at(UPPER_IDENT)
+        && p.nth(1) == L_BRACE
+        && !p.nth_line_break_before(1)
+        && !(p.nth(2).is_ident() && p.nth(3) == COLON);
+    if upper_binding {
+        let name = p.nth_span(0);
+        p.check_name(name, Case::Lower, "the names of caught errors");
+    }
+    let name_next = matches!(p.current(), LOWER_IDENT | UNDERSCORE) || upper_binding;
     let brace_next = p.nth(1) == L_BRACE;
     // `catch err` with `{` on the next line, outside brackets (10.3).
     let brace_below = !ctx.header && p.nth(1) == NEWLINE && p.nth(2) == L_BRACE;
@@ -973,20 +987,27 @@ fn increment(p: &mut Parser<'_>, lhs: Expr) -> Expr {
     let second = p.nth_span(0);
     p.bump();
     let done = p.complete(marker, ERROR);
+    // `count++` at the end of a line ends the statement there, although `+` would continue it.
+    p.end_line_here();
     if !p.speculating() {
         let (written, op) = if plus { ("++", "+=") } else { ("--", "-=") };
         let space = if lhs.done.end == first.start { " " } else { "" };
         let place = p.text_of(lhs.done.span()).to_string();
-        p.push_error(
-            Diagnostic::error(format!("Quell has no `{written}` operator"))
-                .with_code(codes::INCREMENT_DECREMENT)
-                .primary(first.to(second), "not an operator in Quell")
-                .suggest(
-                    format!("write `{place} {op} 1`"),
-                    first.to(second),
-                    format!("{space}{op} 1"),
-                ),
-        );
+        let diagnostic = Diagnostic::error(format!("Quell has no `{written}` operator"))
+            .with_code(codes::INCREMENT_DECREMENT)
+            .primary(first.to(second), "not an operator in Quell")
+            .note(format!("`{place} {op} 1` is a statement, so it gives no value"));
+        // The fix is exact only when `count++` is a whole statement.
+        let diagnostic = if lhs.done.start == p.stmt_start {
+            diagnostic.suggest(
+                format!("write `{place} {op} 1`"),
+                first.to(second),
+                format!("{space}{op} 1"),
+            )
+        } else {
+            diagnostic.help(format!("write `{place} {op} 1` on a line of its own"))
+        };
+        p.push_error(diagnostic);
     }
     Expr::new(done)
 }
@@ -1020,6 +1041,9 @@ pub(crate) fn postfix_loop(p: &mut Parser<'_>, mut lhs: Expr, ctx: Ctx, role: Ro
     // The first `.` or `?.` that starts a line: its span and where the operand before it ended.
     let mut line_dot: Option<(Span, u32)> = None;
     loop {
+        if p.at_fixed_line_end() {
+            break;
+        }
         let kind = p.current();
         match kind {
             L_PAREN | L_BRACK => {

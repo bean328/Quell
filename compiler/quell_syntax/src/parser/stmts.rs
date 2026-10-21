@@ -179,7 +179,7 @@ pub(crate) fn statement_list(p: &mut Parser<'_>, open: Option<usize>) -> Option<
         count += 1;
         previous = info;
         // After a statement comes a line break or the end of the block (4.1).
-        if p.at(NEWLINE) || p.at(EOF) || p.at_soft_break() {
+        if p.at(NEWLINE) || p.at(EOF) || p.at_soft_break() || p.at_fixed_line_end() {
             continue;
         }
         if !top && at_list_close(p, close) {
@@ -217,6 +217,14 @@ pub(crate) fn can_start_statement(p: &Parser<'_>) -> bool {
         || items::at_item_start(p, true)
 }
 
+/// The spaces and tabs right before `offset`, for a fix that starts a new line there (a
+/// comment before them stays where it is).
+pub(crate) fn spaces_before(p: &Parser<'_>, offset: u32) -> Span {
+    let before = &p.text()[..offset as usize];
+    let start = before.trim_end_matches([' ', '\t']).len() as u32;
+    Span::new(start.max(p.last_end()), offset)
+}
+
 #[cold]
 fn statements_on_one_line(p: &mut Parser<'_>, statement_start: Option<u32>) {
     if p.already_reported_here() || p.speculating() {
@@ -224,7 +232,7 @@ fn statements_on_one_line(p: &mut Parser<'_>, statement_start: Option<u32>) {
     }
     let span = p.nth_span(0);
     let indent = indentation_at(p.text(), statement_start.unwrap_or(span.start)).to_string();
-    let between = Span::new(p.last_end(), span.start);
+    let between = spaces_before(p, span.start);
     p.push_error(
         Diagnostic::error("put each statement on its own line")
             .with_code(codes::STATEMENTS_ON_ONE_LINE)
@@ -370,7 +378,11 @@ fn expr_statement(p: &mut Parser<'_>, top: bool) -> Option<StmtInfo> {
         }
         return Some(StmtInfo { kind: EXPR_STMT, span: done.span(), ends_with_brace: true, jump });
     }
-    let Some(lhs) = exprs::full_expr(p, Ctx::default()) else {
+    let saved = p.stmt_start;
+    p.stmt_start = p.nth_span(0).start;
+    let lhs = exprs::full_expr(p, Ctx::default());
+    p.stmt_start = saved;
+    let Some(lhs) = lhs else {
         if p.consumed_since(&marker) {
             p.complete(marker, EXPR_STMT);
         } else {

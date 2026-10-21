@@ -1139,11 +1139,7 @@ error[Q0056]: `#` is only used for raw strings
 1 | # comment
   | ^ this `#` doesn't start a raw string
   |
-  = note: a raw string looks like `#"{"a": 1}"#`
-help: remove it
-  |
-1 |  comment
-  |
+  = note: comments in Quell start with `//`
 help: to write a comment, use `//`
   |
 1 | // comment

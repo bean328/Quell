@@ -97,6 +97,7 @@ pub(crate) const FROM_IMPORT: &str = "Q0190";
 pub(crate) const TRIPLE_EQUALS: &str = "Q0191";
 pub(crate) const NEW_KEYWORD: &str = "Q0192";
 pub(crate) const PYTHON_CONDITIONAL: &str = "Q0193";
+pub(crate) const TYPE_BEFORE_NAME: &str = "Q0194";
 
 // ----------------------------------------------------------------------
 // Warnings: Q0400 to Q0499 (spec/grammar.md, section 9.2)
